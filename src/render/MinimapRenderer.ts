@@ -215,7 +215,17 @@ export class MinimapRenderer {
   public render(state: Readonly<SimState>): void {
     if (!this.canvas || !this.ctx) return;
     if (!this.visible && !this.fullMapOpen) return;
-    if (state.phase === 'title' || state.phase === 'boot' || state.phase === 'character_select' || state.phase === 'map_select') {
+    if (
+      state.phase === 'boot' ||
+      state.phase === 'title' ||
+      state.phase === 'character_select' ||
+      state.phase === 'map_select' ||
+      state.phase === 'shop' ||
+      state.phase === 'quests' ||
+      state.phase === 'settings' ||
+      state.phase === 'victory' ||
+      state.phase === 'game_over'
+    ) {
       this.canvas.style.display = 'none';
       return;
     }
