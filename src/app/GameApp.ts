@@ -639,6 +639,12 @@ export class GameApp {
     for (let i = 0; i < events.length; i++) {
       const ev = events[i]!;
 
+      if (ev.type === 'portal_activated' && this.sim.getState().phase === 'playing') {
+        const st = this.sim.getState();
+        this.ensureMapVisualsLoaded(ev.targetMapId, ev.targetTier, st.seed, true);
+        this.syncMusicForCurrentState();
+      }
+
       if (ev.type === 'phase_changed') {
         if (ev.to === 'victory') {
           this.recordRunOutcomeIfNeeded(true);

@@ -40,11 +40,17 @@ import {
   getWeaponById,
 } from '../data/index';
 import { populateInitialInteractables, stepEncounters, stepPickups } from './encounters';
-import { stepEnemies } from './enemies';
+import { applyPlayerDamage, stepEnemies } from './enemies';
 import { computeSimStateHash } from './hash';
 import { dispatchItemTrigger, grantPlayerItem, stepItemCooldowns } from './items';
 import { stepCharacterPassives } from './passives';
-import { stepPlayerPhysics, verifyPosition, type CharacterPhysicsFlags } from './physics';
+import {
+  applyWindField,
+  resolveCharacterPhysicsFlags,
+  stepPlayerPhysics,
+  verifyPosition,
+  type CharacterPhysicsFlags,
+} from './physics';
 import { createRngCallback, deriveSeed, normalizeSeed } from './prng';
 import {
   applyDraftChoice as applyDraftChoiceImpl,
@@ -56,7 +62,11 @@ import {
 } from './progression';
 import { spawnEnemyEntity, stepSpawner, triggerFinalSwarm, triggerStageBoss } from './spawner';
 import { createBaseStatBlock, recalculatePlayerStats } from './stats';
-import { createTerrainSampler } from './terrain';
+import {
+  createTerrainSampler,
+  sampleDesertTornadoes,
+  type TerrainCreationResult,
+} from './terrain';
 import { handleEnemyDeath, stepWeapons } from './weapons';
 
 function cloneVec3(v: Readonly<Vec3>): Vec3 {
@@ -246,22 +256,6 @@ export function cloneSimState(s: Readonly<SimState>): SimState {
   };
 }
 
-function resolveCharacterPhysicsFlags(
-  characterId: CharacterId,
-  specialFlags?: readonly string[],
-): CharacterPhysicsFlags {
-  const flags = specialFlags ?? [];
-  return {
-    infiniteWallClimb:
-      characterId === 'Monke' ||
-      flags.includes('infinite_wall_climb') ||
-      flags.includes('unlimited_wall_climb'),
-    canGlide: characterId === 'Birdo' || flags.includes('glide') || flags.includes('can_glide'),
-    lowGravity:
-      characterId === 'Spaceman' || flags.includes('low_gravity') || flags.includes('zero_g'),
-  };
-}
-
 function resolveStageDurationSec(
   mapId: MapId,
   mapTier: MapTier,
@@ -279,8 +273,29 @@ function resolveStageDurationSec(
 function buildFinalBossPylons(
   terrain: ITerrainSampler,
   nextId: () => number,
+  pylonPositions?: readonly Vec3[],
 ): BossPylonState[] {
   const pylons: BossPylonState[] = [];
+  if (pylonPositions && pylonPositions.length >= FINAL_BOSS_PYLON_COUNT) {
+    for (let i = 0; i < FINAL_BOSS_PYLON_COUNT; i++) {
+      const p = pylonPositions[i]!;
+      const sample = terrain.sample(p.x, p.z);
+      pylons.push({
+        id: nextId(),
+        index: i,
+        pos: { x: p.x, y: sample.height, z: p.z },
+        radius: 4.5,
+        active: false,
+        cleansed: false,
+        chargeProgress: 0,
+        chargeDurationSec: 4.0,
+        stolenWeaponSlotIndex: null,
+        stolenWeaponId: null,
+      });
+    }
+    return pylons;
+  }
+
   const ringRadius = 52;
   for (let i = 0; i < FINAL_BOSS_PYLON_COUNT; i++) {
     const angle = (i / FINAL_BOSS_PYLON_COUNT) * Math.PI * 2;
@@ -292,7 +307,7 @@ function buildFinalBossPylons(
       index: i,
       pos: { x, y: sample.height, z },
       radius: 4.5,
-      active: true,
+      active: false,
       cleansed: false,
       chargeProgress: 0,
       chargeDurationSec: 4.0,
@@ -308,15 +323,17 @@ export class SimEngine implements ISimEngine {
   private state: SimState;
   private prevState: SimState;
   private terrain: ITerrainSampler;
+  private terrainBundle: TerrainCreationResult;
   private challenge: ChallengeDef | null = null;
   private shopLevels: Partial<Record<ShopUpgradeId, number>> = {};
   private characterFlags: CharacterPhysicsFlags = {};
+  private lavaGroundTicks = 0;
 
   constructor(catalog: Readonly<GameCatalog> = GAME_CATALOG) {
     this.catalog = catalog;
     // Initialize a valid idle title state so getters are always safe prior to `initRun()`
-    const defaultTerrain = createTerrainSampler('Forest', 1, 1);
-    this.terrain = defaultTerrain.sampler;
+    this.terrainBundle = createTerrainSampler('Forest', 1, 1);
+    this.terrain = this.terrainBundle.sampler;
     this.state = this.createInitialState(
       { seed: 1, characterId: 'Fox', mapId: 'Forest', mapTier: 1 },
       'title',
@@ -364,7 +381,9 @@ export class SimEngine implements ISimEngine {
     this.shopLevels = config.shopLevels ? { ...config.shopLevels } : {};
 
     const terrainBundle = createTerrainSampler(config.mapId, config.mapTier, seed);
+    this.terrainBundle = terrainBundle;
     this.terrain = terrainBundle.sampler;
+    this.lavaGroundTicks = 0;
 
     const charDef = getCharacterById(config.characterId) ?? this.catalog.characters[0];
     const mapDef = getMapById(config.mapId) ?? this.catalog.maps[0];
@@ -373,6 +392,7 @@ export class SimEngine implements ISimEngine {
     this.characterFlags = resolveCharacterPhysicsFlags(
       config.characterId,
       charDef?.passive.specialFlags,
+      config.challengeId,
     );
 
     const spawnPoint = this.terrain.getSpawnPoint();
@@ -537,7 +557,11 @@ export class SimEngine implements ISimEngine {
     );
 
     if (config.mapId === 'FinalBossMap') {
-      state.pylons = buildFinalBossPylons(this.terrain, () => state.nextEntityId++);
+      state.pylons = buildFinalBossPylons(
+        this.terrain,
+        () => state.nextEntityId++,
+        terrainBundle.pylonPositions,
+      );
     }
 
     return state;
@@ -688,9 +712,50 @@ export class SimEngine implements ISimEngine {
     // 1. Item internal cooldowns
     stepItemCooldowns(this.state, FIXED_DT);
 
-    // 2. Kinetic player movement & physics
+    // 2. Kinetic player movement & physics (+ Desert roaming tornado wind field)
     const prePhysicsEventIdx = events.length;
     stepPlayerPhysics(this.state, input, this.terrain, events, this.characterFlags);
+
+    if (this.state.mapId === 'Desert' && !this.state.player.dead) {
+      const windField = sampleDesertTornadoes(
+        this.state.simTimeSec,
+        this.state.seed,
+        this.terrain.arenaRadius,
+        this.terrain,
+      );
+      applyWindField(this.state.player, windField, FIXED_DT);
+    }
+
+    // Challenge: The Floor is Lava (staying grounded scorches player; jumping/sliding/grinding is safe)
+    if (this.state.challengeId === 'TheFloorIsLava' && !this.state.player.dead) {
+      const p = this.state.player;
+      const touchingLava = p.grounded && !p.isSliding && p.railId === null;
+      if (touchingLava) {
+        this.lavaGroundTicks += 1;
+        if (this.lavaGroundTicks >= 22 && (this.lavaGroundTicks - 22) % 25 === 0) {
+          const scorchDmg = Math.max(4, Math.round(p.maxHp * 0.06));
+          applyPlayerDamage(this.state, this.catalog, scorchDmg, null, rng, events, this.recalcStats);
+        }
+      } else {
+        this.lavaGroundTicks = 0;
+      }
+    }
+
+    // Graveyard Crypt Escape zone proximity unlock when holding CryptKey
+    if (
+      this.state.mapId === 'Graveyard' &&
+      !this.state.cryptUnlocked &&
+      this.state.player.hasCryptKey &&
+      this.terrainBundle.cryptEscapeZone
+    ) {
+      const ez = this.terrainBundle.cryptEscapeZone;
+      const dx = this.state.player.pos.x - ez.entryPos.x;
+      const dz = this.state.player.pos.z - ez.entryPos.z;
+      if (dx * dx + dz * dz <= ez.radius * ez.radius) {
+        this.state.cryptUnlocked = true;
+        this.state.activeBannerText = 'CRYPT UNLOCKED — ENTER TO FACE BIG BOB!';
+      }
+    }
 
     // Dispatch declarative movement item hooks from newly emitted physics events
     for (let i = prePhysicsEventIdx; i < events.length; i++) {
@@ -802,6 +867,7 @@ export class SimEngine implements ISimEngine {
     );
 
     // 8. World interactables, shrines, chests, pots, BossSpawner, BossPortal
+    const preEncounterEventIdx = events.length;
     stepEncounters(
       this.state,
       this.catalog,
@@ -814,6 +880,16 @@ export class SimEngine implements ISimEngine {
       this.shopLevels,
       this.challenge,
     );
+
+    // If a multi-tier BossPortal transitioned us to a new Map/Tier (T1->T2->T3->FinalBossMap),
+    // rebuild the deterministic terrain sampler, rails, jump pads, interactables, and pylons cleanly!
+    for (let i = preEncounterEventIdx; i < events.length; i++) {
+      const ev = events[i]!;
+      if (ev.type === 'portal_activated' && this.state.phase === 'playing') {
+        this.rebuildTerrainAfterPortalTransition(ev.targetMapId, ev.targetTier, rng);
+        break;
+      }
+    }
 
     // 9. Pickups magnetism, collection, powerups, and XP level-up checks
     stepPickups(
@@ -897,6 +973,67 @@ export class SimEngine implements ISimEngine {
       totalPylons: this.state.pylons.length,
       pos: cloneVec3(pylon.pos),
     });
+
+    const stillActive = this.state.pylons.some((py) => py.active && !py.cleansed);
+    if (!stillActive && this.state.finalBossId !== null) {
+      this.state.activeBannerText = 'PYLON SHIELD BROKEN — STRIKE THE FINAL BOSS!';
+    }
+  }
+
+  private rebuildTerrainAfterPortalTransition(
+    mapId: MapId,
+    tier: MapTier,
+    rng: () => number,
+  ): void {
+    const nextSeed = deriveSeed(this.state.seed, `${mapId}:${tier}`);
+    const terrainBundle = createTerrainSampler(mapId, tier, nextSeed);
+    this.terrainBundle = terrainBundle;
+    this.terrain = terrainBundle.sampler;
+    this.lavaGroundTicks = 0;
+
+    const spawnPt = this.terrain.getSpawnPoint();
+    const spawnSample = this.terrain.sample(spawnPt.x, spawnPt.z);
+    const p = this.state.player;
+    p.pos = { x: spawnPt.x, y: spawnSample.height, z: spawnPt.z };
+    p.prevPos = cloneVec3(p.pos);
+    p.vel = { x: 0, y: 0, z: 0 };
+    p.grounded = true;
+    p.groundNormal = cloneVec3(spawnSample.normal);
+    p.isSliding = false;
+    p.railId = null;
+    p.peakFallSpeed = 0;
+    p.safePos = cloneVec3(p.pos);
+
+    this.state.rails = terrainBundle.rails;
+    this.state.jumpPads = terrainBundle.jumpPads;
+    this.state.interactables = [];
+    this.state.pylons = [];
+
+    if (mapId === 'FinalBossMap') {
+      this.state.pylons = buildFinalBossPylons(
+        this.terrain,
+        () => this.state.nextEntityId++,
+        terrainBundle.pylonPositions,
+      );
+      // Place BossSpawner on central dais so player can trigger FinalBoss immediately (or auto-trigger)
+      populateInitialInteractables(
+        this.state,
+        this.catalog,
+        terrainBundle.interactableSpots.slice(0, 6),
+        terrainBundle.bossArenaCenter,
+        this.terrain,
+        rng,
+      );
+    } else {
+      populateInitialInteractables(
+        this.state,
+        this.catalog,
+        terrainBundle.interactableSpots,
+        terrainBundle.bossArenaCenter,
+        this.terrain,
+        rng,
+      );
+    }
   }
 
   // ==========================================================================
@@ -1049,7 +1186,9 @@ export class SimEngine implements ISimEngine {
     const prev = this.state;
     const nextSeed = deriveSeed(prev.seed, `${mapId}:${tier}`);
     const terrainBundle = createTerrainSampler(mapId, tier, nextSeed);
+    this.terrainBundle = terrainBundle;
     this.terrain = terrainBundle.sampler;
+    this.lavaGroundTicks = 0;
 
     const mapDef = getMapById(mapId) ?? this.catalog.maps[0];
     const spawnPoint = this.terrain.getSpawnPoint();
@@ -1115,7 +1254,11 @@ export class SimEngine implements ISimEngine {
     );
 
     if (mapId === 'FinalBossMap') {
-      this.state.pylons = buildFinalBossPylons(this.terrain, () => this.state.nextEntityId++);
+      this.state.pylons = buildFinalBossPylons(
+        this.terrain,
+        () => this.state.nextEntityId++,
+        terrainBundle.pylonPositions,
+      );
     }
 
     this.prevState = cloneSimState(this.state);
