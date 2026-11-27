@@ -2,8 +2,12 @@ import type {
   ChallengeDef,
   GameCatalog,
   InputFrame,
+  InteractableKind,
   InteractableState,
+  InteractableVariant,
   ITerrainSampler,
+  MapId,
+  MapTier,
   PickupKind,
   PickupState,
   ShopUpgradeId,
@@ -11,9 +15,19 @@ import type {
   SimState,
   Vec3,
 } from '../contracts/index';
+import { STAGE_DURATIONS_BY_TIER } from '../data/maps';
+import { ensureFinalBossPylonsInitialized } from './bosses';
 import { applyDamageToEnemy, applyDebuffToEnemy } from './damage';
 import { dispatchItemTrigger, getPlayerItemStacks, grantPlayerItem } from './items';
-import { checkAndTriggerLevelUp, generateShrineOffer, rollRarity } from './progression';
+import {
+  checkAndTriggerLevelUp,
+  generateBalanceShrineOffer,
+  generateMicrowaveOffer,
+  generateMoaiItemOffer,
+  generateShadyGuyOffer,
+  generateShrineOffer,
+  rollRarity,
+} from './progression';
 import { spawnEnemyEntity, triggerStageBoss } from './spawner';
 import { handleEnemyDeath } from './weapons';
 
@@ -45,9 +59,23 @@ export function spawnPickup(
   return p;
 }
 
+function getBiomePotVariant(mapId: MapId): InteractableVariant {
+  if (mapId === 'Desert') return 'tumbleweed';
+  if (mapId === 'Graveyard') return 'pumpkin';
+  return 'normal';
+}
+
+function getChallengeWaveEnemyId(mapId: MapId): string {
+  if (mapId === 'Desert') return 'ScorpionMedium';
+  if (mapId === 'Graveyard') return 'GreaterGhost';
+  return 'GoblinStrong';
+}
+
 /**
- * Populates initial world interactables across terrain spots:
- * ChargeShrines (15% Golden), Chests (normal + occasional free), Pots, utility Shrines, and 1 BossSpawner.
+ * Populates ALL 12 world interactable kinds across terrain spots:
+ * ChargeShrine (15% Golden + Beacon extras), Chest (normal/free/evil/ghost),
+ * ShrineMoai, ShadyGuy, Microwave, ShrineGreed, ShrineChallenge, ShrineCursed,
+ * ShrineMagnet, ShrineBalance, Pot/Pumpkin/Tumbleweed (+Pumpkin item extras), and BossSpawner (+CryptAltar in Graveyard).
  */
 export function populateInitialInteractables(
   state: SimState,
@@ -57,7 +85,13 @@ export function populateInitialInteractables(
   terrain: ITerrainSampler,
   rng: () => number,
 ): void {
+  if (state.mapId === 'FinalBossMap') {
+    // FinalBossMap focuses cleanly on the 11 Boss Pylons & Final Boss fight
+    return;
+  }
+
   const defByKind = new Map(catalog.interactables.map((d) => [d.kind, d]));
+  const potVariant = getBiomePotVariant(state.mapId);
 
   // Always place BossSpawner at bossArenaCenter
   const bossDef = defByKind.get('BossSpawner');
@@ -66,7 +100,7 @@ export function populateInitialInteractables(
   state.interactables.push({
     id: state.nextEntityId++,
     kind: 'BossSpawner',
-    variant: 'normal',
+    variant: state.mapId === 'Graveyard' ? 'crypt_altar' : 'normal',
     pos: { x: clampedBoss.x, y: bossSample.height, z: clampedBoss.z },
     radius: bossDef?.interactRadius ?? 4.5,
     used: false,
@@ -76,16 +110,28 @@ export function populateInitialInteractables(
     costGold: 0,
   });
 
+  // Guarantee ALL special encounter types appear across every map!
+  const specialRotation: readonly InteractableKind[] = [
+    'ShrineMoai',
+    'ShadyGuy',
+    'Microwave',
+    'ShrineGreed',
+    'ShrineChallenge',
+    'ShrineCursed',
+    'ShrineMagnet',
+    'ShrineBalance',
+  ];
+  let specialCursor = 0;
+
   for (let i = 0; i < spots.length; i++) {
     const raw = spots[i];
-    // Avoid overlapping BossSpawner
     if (distSqXZ(raw.x, raw.z, clampedBoss.x, clampedBoss.z) < 100) continue;
     const clamped = terrain.clampToArena(raw, 6);
     const sample = terrain.sample(clamped.x, clamped.z);
     const pos: Vec3 = { x: clamped.x, y: sample.height, z: clamped.z };
 
     const mod = i % 5;
-    if (mod === 0 || mod === 2) {
+    if (mod === 0) {
       const def = defByKind.get('ChargeShrine');
       const isGolden = rng() < 0.15;
       state.interactables.push({
@@ -102,42 +148,25 @@ export function populateInitialInteractables(
       });
     } else if (mod === 1) {
       const def = defByKind.get('Chest');
-      const isFree = rng() < 0.18;
+      const r = rng();
+      const variant: InteractableVariant =
+        r < 0.16 ? 'free' : r < 0.28 ? 'evil' : r < 0.4 ? 'ghost' : 'normal';
       state.interactables.push({
         id: state.nextEntityId++,
         kind: 'Chest',
-        variant: isFree ? 'free' : 'normal',
+        variant,
         pos,
         radius: def?.interactRadius ?? 3.4,
         used: false,
         active: true,
         chargeProgress: 0,
         chargeDurationSec: 0,
-        costGold: isFree ? 0 : def?.baseGoldCost ?? 25,
+        costGold: variant === 'free' ? 0 : def?.baseGoldCost ?? 25,
       });
-    } else if (mod === 3) {
-      // Cluster of 2 breakable Pots
-      const def = defByKind.get('Pot');
-      for (let p = 0; p < 2; p++) {
-        const offsetX = (p === 0 ? -1.4 : 1.4);
-        const potSample = terrain.sample(pos.x + offsetX, pos.z);
-        state.interactables.push({
-          id: state.nextEntityId++,
-          kind: 'Pot',
-          variant: 'normal',
-          pos: { x: pos.x + offsetX, y: potSample.height, z: pos.z },
-          radius: def?.interactRadius ?? 2.2,
-          used: false,
-          active: true,
-          chargeProgress: 0,
-          chargeDurationSec: 0,
-          costGold: 0,
-        });
-      }
-    } else {
-      // Utility shrine variety (ShrineMagnet / ShrineGreed / ShrineMoai)
-      const kinds = ['ShrineMagnet', 'ShrineGreed', 'ShrineMoai'] as const;
-      const kind = kinds[Math.floor(i / 5) % kinds.length];
+    } else if (mod === 2) {
+      // Cycle through all 8 unique special shrines/merchants/microwave!
+      const kind = specialRotation[specialCursor % specialRotation.length];
+      specialCursor += 1;
       const def = defByKind.get(kind);
       state.interactables.push({
         id: state.nextEntityId++,
@@ -148,10 +177,111 @@ export function populateInitialInteractables(
         used: false,
         active: true,
         chargeProgress: 0,
-        chargeDurationSec: 0,
+        chargeDurationSec: kind === 'Microwave' ? 3 : 0, // 3 max uses before exploding!
+        costGold: def?.baseGoldCost ?? 0,
+      });
+    } else if (mod === 3) {
+      const def = defByKind.get('Pot');
+      for (let p = 0; p < 2; p++) {
+        const offsetX = p === 0 ? -1.4 : 1.4;
+        const potSample = terrain.sample(pos.x + offsetX, pos.z);
+        state.interactables.push({
+          id: state.nextEntityId++,
+          kind: 'Pot',
+          variant: potVariant,
+          pos: { x: pos.x + offsetX, y: potSample.height, z: pos.z },
+          radius: def?.interactRadius ?? 2.2,
+          used: false,
+          active: true,
+          chargeProgress: 0,
+          chargeDurationSec: 0,
+          costGold: 0,
+        });
+      }
+    } else {
+      const def = defByKind.get('ChargeShrine');
+      const isGolden = rng() < 0.15;
+      state.interactables.push({
+        id: state.nextEntityId++,
+        kind: 'ChargeShrine',
+        variant: isGolden ? 'golden' : 'normal',
+        pos,
+        radius: def?.interactRadius ?? 5.5,
+        used: false,
+        active: true,
+        chargeProgress: 0,
+        chargeDurationSec: def?.chargeDurationSec ?? 5.0,
         costGold: 0,
       });
     }
+  }
+
+  // Guarantee EVERY ONE of the 8 unique special shrines/merchants/microwave spawns on every map!
+  while (specialCursor < specialRotation.length) {
+    const kind = specialRotation[specialCursor];
+    specialCursor += 1;
+    const def = defByKind.get(kind);
+    const angle = (specialCursor / specialRotation.length) * Math.PI * 2 + 0.35;
+    const dist = 34 + (specialCursor % 3) * 18;
+    const clamped = terrain.clampToArena(
+      { x: Math.cos(angle) * dist, y: 0, z: Math.sin(angle) * dist },
+      8,
+    );
+    const sample = terrain.sample(clamped.x, clamped.z);
+    state.interactables.push({
+      id: state.nextEntityId++,
+      kind,
+      variant: 'normal',
+      pos: { x: clamped.x, y: sample.height, z: clamped.z },
+      radius: def?.interactRadius ?? 4.0,
+      used: false,
+      active: true,
+      chargeProgress: 0,
+      chargeDurationSec: kind === 'Microwave' ? 3 : 0,
+      costGold: def?.baseGoldCost ?? 0,
+    });
+  }
+
+  // Beacon spawns extra ChargeShrines for future stages
+  const beaconStacks = getPlayerItemStacks(state.player, 'Beacon');
+  for (let b = 0; b < beaconStacks; b++) {
+    const ang = rng() * Math.PI * 2;
+    const dist = 22 + rng() * 30;
+    const c = terrain.clampToArena({ x: Math.cos(ang) * dist, y: 0, z: Math.sin(ang) * dist }, 6);
+    const s = terrain.sample(c.x, c.z);
+    state.interactables.push({
+      id: state.nextEntityId++,
+      kind: 'ChargeShrine',
+      variant: rng() < 0.2 ? 'golden' : 'normal',
+      pos: { x: c.x, y: s.height, z: c.z },
+      radius: 5.5,
+      used: false,
+      active: true,
+      chargeProgress: 0,
+      chargeDurationSec: 5.0,
+      costGold: 0,
+    });
+  }
+
+  // Pumpkin spawns extra Pots/Pumpkins
+  const pumpkinStacks = getPlayerItemStacks(state.player, 'Pumpkin');
+  for (let p = 0; p < pumpkinStacks * 3; p++) {
+    const ang = rng() * Math.PI * 2;
+    const dist = 16 + rng() * 45;
+    const c = terrain.clampToArena({ x: Math.cos(ang) * dist, y: 0, z: Math.sin(ang) * dist }, 6);
+    const s = terrain.sample(c.x, c.z);
+    state.interactables.push({
+      id: state.nextEntityId++,
+      kind: 'Pot',
+      variant: 'pumpkin',
+      pos: { x: c.x, y: s.height, z: c.z },
+      radius: 2.2,
+      used: false,
+      active: true,
+      chargeProgress: 0,
+      chargeDurationSec: 0,
+      costGold: 0,
+    });
   }
 }
 
@@ -159,13 +289,14 @@ function rollChestItem(
   state: Readonly<SimState>,
   catalog: Readonly<GameCatalog>,
   rng: () => number,
+  minLuckBonus = 0,
 ): string | null {
   const pool = catalog.items.filter(
     (it) => !it.isQuestItem && !state.banishedIds.includes(it.id),
   );
   if (pool.length === 0) return null;
 
-  const targetRarity = rollRarity(state.player.stats.Luck, rng);
+  const targetRarity = rollRarity(state.player.stats.Luck + minLuckBonus, rng);
   const matching = pool.filter((it) => it.rarity === targetRarity);
   const chosenPool = matching.length > 0 ? matching : pool;
   const picked = chosenPool[Math.floor(rng() * chosenPool.length) % chosenPool.length];
@@ -188,7 +319,7 @@ function completeChargeShrine(
   const wrenchStacks = getPlayerItemStacks(state.player, 'Wrench');
   const beaconStacks = getPlayerItemStacks(state.player, 'Beacon');
 
-  // Beacon heals player cleanly upon shrine completion (in addition to its OnInteract hook)
+  // Beacon turns completed ChargeShrine into a persistent healing zone + instant heal!
   if (beaconStacks > 0 && !state.player.dead) {
     const healAmt = Math.round(state.player.maxHp * Math.min(0.75, 0.2 * beaconStacks));
     const before = state.player.hp;
@@ -202,6 +333,22 @@ function completeChargeShrine(
         amount: actual,
       });
     }
+    state.areaEffects.push({
+      id: state.nextEntityId++,
+      kind: 'aura',
+      weaponId: 'item:BeaconZone',
+      ownerIsPlayer: true,
+      pos: { x: shrine.pos.x, y: shrine.pos.y + 0.3, z: shrine.pos.z },
+      radius: 6.5,
+      height: 2.5,
+      lifeSec: 0,
+      maxLifeSec: 45.0,
+      tickTimer: 0.5,
+      tickIntervalSec: 0.75,
+      damage: 8 * beaconStacks,
+      element: 'Holy',
+      procCoefficient: 0,
+    });
   }
 
   events.push({
@@ -222,7 +369,6 @@ function completeChargeShrine(
     events,
   );
 
-  // Present 3-card stat blessing offer
   if (state.pendingOffer === null) {
     state.pendingOffer = generateShrineOffer(state, rng, isGolden, wrenchStacks, 'shrine');
     const fromPhase = state.phase;
@@ -237,7 +383,105 @@ function completeChargeShrine(
 }
 
 /**
- * Steps all world interactables (ChargeShrines, Chests, Pots, BossSpawner, BossPortal, utility shrines).
+ * Transitions the run cleanly through multi-tier Boss Portals:
+ * - Forest / Desert: T1 -> T2 (540s) -> T3 (480s) -> FinalBossMap (11 Boss Pylons + FinalBoss)
+ * - Graveyard / FinalBossMap: Victory!
+ */
+function activateBossPortalTransition(
+  state: SimState,
+  catalog: Readonly<GameCatalog>,
+  terrain: ITerrainSampler,
+  rng: () => number,
+  events: SimEvent[],
+  challenge?: ChallengeDef | null,
+): void {
+  const player = state.player;
+  const stageSilver = Math.round(
+    25 * state.mapTier * Math.max(1, player.stats.SilverMultiplier) * (challenge?.silverMultiplier ?? 1),
+  );
+  player.silverEarned += stageSilver;
+
+  // Forest & Desert advance T1 -> T2 -> T3 -> FinalBossMap!
+  if (state.mapId === 'Forest' || state.mapId === 'Desert') {
+    const targetMapId: MapId = state.mapTier < 3 ? state.mapId : 'FinalBossMap';
+    const targetTier: MapTier = state.mapTier < 3 ? ((state.mapTier + 1) as MapTier) : 1;
+
+    events.push({
+      type: 'portal_activated',
+      tick: state.tick,
+      targetMapId,
+      targetTier,
+    });
+
+    const spawnPt = terrain.getSpawnPoint();
+    const spawnSample = terrain.sample(spawnPt.x, spawnPt.z);
+    player.pos = { x: spawnPt.x, y: spawnSample.height, z: spawnPt.z };
+    player.prevPos = { ...player.pos };
+    player.vel = { x: 0, y: 0, z: 0 };
+    player.safePos = { ...player.pos };
+    player.hp = player.maxHp;
+    player.shield = player.maxShield;
+    for (let i = 0; i < player.weapons.length; i++) {
+      player.weapons[i].stolenByPylonId = null;
+    }
+
+    state.mapId = targetMapId;
+    state.mapTier = targetTier;
+    const baseDur = STAGE_DURATIONS_BY_TIER[targetMapId][targetTier];
+    state.stageDurationSec = Math.max(30, Math.round(baseDur * (challenge?.rules.timerScale ?? 1)));
+    state.enemies = [];
+    state.projectiles = [];
+    state.areaEffects = [];
+    state.pickups = [];
+    state.interactables = [];
+    state.pylons = [];
+    state.stageBossId = null;
+    state.stageBossDefeated = false;
+    state.bossPortalOpen = false;
+    state.bossPortalPos = null;
+    state.finalBossId = null;
+    state.finalSwarmActive = false;
+    state.spookySteveId = null;
+    state.stageEventsFired = [];
+
+    if (targetMapId === 'FinalBossMap') {
+      ensureFinalBossPylonsInitialized(state, terrain);
+      state.activeBannerText = 'OBSIDIAN CITADEL — FACE THE FINAL BOSS!';
+    } else {
+      // Repopulate interactables around the stage ring for next tier
+      const spots: Vec3[] = [];
+      for (let i = 0; i < 16; i++) {
+        const ang = (i / 16) * Math.PI * 2;
+        const r = 28 + (i % 3) * 26;
+        spots.push({ x: Math.cos(ang) * r, y: 0, z: Math.sin(ang) * r });
+      }
+      populateInitialInteractables(state, catalog, spots, { x: 0, y: 0, z: -72 }, terrain, rng);
+      state.activeBannerText = `${targetMapId.toUpperCase()} — TIER ${targetTier}!`;
+    }
+    return;
+  }
+
+  // Graveyard / FinalBossMap portal => Victory
+  events.push({
+    type: 'portal_activated',
+    tick: state.tick,
+    targetMapId: state.mapId,
+    targetTier: state.mapTier,
+  });
+  const fromPhase = state.phase;
+  state.phase = 'victory';
+  events.push({
+    type: 'phase_changed',
+    tick: state.tick,
+    from: fromPhase,
+    to: 'victory',
+  });
+}
+
+/**
+ * Steps ALL 12 world interactable kinds (ChargeShrine, Chest, ShrineMoai, ShadyGuy,
+ * Microwave, ShrineGreed, ShrineChallenge, ShrineCursed, ShrineMagnet, ShrineBalance,
+ * Pot/Pumpkin/Tumbleweed, BossSpawner) and BossPortal extraction.
  */
 export function stepEncounters(
   state: SimState,
@@ -256,6 +500,8 @@ export function stepEncounters(
   const player = state.player;
   const minutes = state.simTimeSec / 60;
   const wrenchStacks = getPlayerItemStacks(player, 'Wrench');
+  const keyStacks = getPlayerItemStacks(player, 'Key');
+  const pumpkinStacks = getPlayerItemStacks(player, 'Pumpkin');
   const defByKind = new Map(catalog.interactables.map((d) => [d.kind, d]));
 
   // 1. Check BossPortal extraction
@@ -266,35 +512,18 @@ export function stepEncounters(
       state.bossPortalPos.x,
       state.bossPortalPos.z,
     );
-    if (portalDistSq <= 2.4 * 2.4 || (portalDistSq <= 4.0 * 4.0 && input.interactPressed)) {
-      const victorySilver = Math.round(
-        25 * state.mapTier * Math.max(1, player.stats.SilverMultiplier) * (challenge?.silverMultiplier ?? 1),
-      );
-      player.silverEarned += victorySilver;
-      events.push({
-        type: 'portal_activated',
-        tick: state.tick,
-        targetMapId: state.mapId,
-        targetTier: state.mapTier,
-      });
-      const fromPhase = state.phase;
-      state.phase = 'victory';
-      events.push({
-        type: 'phase_changed',
-        tick: state.tick,
-        from: fromPhase,
-        to: 'victory',
-      });
+    if (portalDistSq <= 2.4 * 2.4 || (portalDistSq <= 4.2 * 4.2 && input.interactPressed)) {
+      activateBossPortalTransition(state, catalog, terrain, rng, events, challenge);
       return;
     }
   }
 
-  // 2. Step world interactables
+  // 2. Step all world interactables
   for (let i = 0; i < state.interactables.length; i++) {
     const obj = state.interactables[i];
     if (obj.used || !obj.active) continue;
 
-    // Keep chest gold cost dynamically scaled with run time
+    // Keep paid Chest gold cost dynamically scaled with run time
     if (obj.kind === 'Chest' && obj.variant !== 'free') {
       const chestDef = defByKind.get('Chest');
       const base = chestDef?.baseGoldCost ?? 25;
@@ -318,20 +547,21 @@ export function stepEncounters(
       continue;
     }
 
-    // Pots smash on interact OR kinetic slide/contact pass-through!
+    // Pot / Pumpkin / Tumbleweed smash on interact OR kinetic contact/slide pass-through!
     if (obj.kind === 'Pot') {
       const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
       const smashedByContact = dSq <= 1.8 * 1.8 && (player.isSliding || horizSpeed >= 6.5);
       if (smashedByContact || (inRadius && input.interactPressed)) {
         obj.used = true;
         obj.active = false;
+        const rewardMult = 1 + 0.5 * pumpkinStacks;
         const roll = rng();
         if (roll < 0.45) {
-          spawnPickup(state, 'gold', obj.pos, Math.round(10 + minutes * 4), rng);
+          spawnPickup(state, 'gold', obj.pos, Math.round((10 + minutes * 4) * rewardMult), rng);
         } else if (roll < 0.8) {
-          spawnPickup(state, 'xp_medium', obj.pos, Math.round(14 + minutes * 5), rng);
+          spawnPickup(state, 'xp_medium', obj.pos, Math.round((14 + minutes * 5) * rewardMult), rng);
         } else {
-          spawnPickup(state, 'health', obj.pos, 25, rng);
+          spawnPickup(state, 'health', obj.pos, Math.round(25 * rewardMult), rng);
         }
         events.push({
           type: 'interactable_used',
@@ -347,20 +577,39 @@ export function stepEncounters(
 
     if (!inRadius || !input.interactPressed) continue;
 
-    // Interactive encounters activated by interactPressed
     switch (obj.kind) {
       case 'Chest': {
-        if (player.gold < obj.costGold) break;
-        player.gold -= obj.costGold;
+        const freeByKey =
+          obj.costGold > 0 && keyStacks > 0 && rng() < Math.min(0.85, 0.12 * keyStacks);
+        const actualCost = freeByKey ? 0 : obj.costGold;
+        if (player.gold < actualCost) break;
+        player.gold -= actualCost;
         obj.used = true;
         obj.active = false;
         state.summary.chestsOpened += 1;
 
-        const itemId = rollChestItem(state, catalog, rng);
+        // Evil & Ghost chest variants spawn guardians and grant higher rarity luck!
+        let luckBonus = 0;
+        if (obj.variant === 'evil') {
+          luckBonus = 1.2;
+          for (let k = 0; k < 2; k++) {
+            spawnEnemyEntity(state, catalog, getChallengeWaveEnemyId(state.mapId), terrain, rng, events, {
+              isElite: true,
+              challenge,
+            });
+          }
+        } else if (obj.variant === 'ghost') {
+          luckBonus = 0.6;
+          for (let k = 0; k < 2; k++) {
+            spawnEnemyEntity(state, catalog, 'Ghost', terrain, rng, events, { challenge });
+          }
+        }
+
+        const itemId = rollChestItem(state, catalog, rng, luckBonus);
         if (itemId) {
           grantPlayerItem(state, itemId, 1, recalcStats);
           const itemDef = catalog.items.find((it) => it.id === itemId);
-          state.activeBannerText = `CHEST OPENED: ${itemDef?.displayName ?? itemId}!`;
+          state.activeBannerText = `${freeByKey ? 'FREE KEY ' : ''}CHEST OPENED: ${itemDef?.displayName ?? itemId}!`;
         }
 
         events.push({
@@ -380,6 +629,9 @@ export function stepEncounters(
         if (state.stageBossId !== null || state.stageBossDefeated) break;
         obj.used = true;
         obj.active = false;
+        if (state.mapId === 'Graveyard') {
+          state.cryptUnlocked = true;
+        }
         triggerStageBoss(state, catalog, terrain, rng, events, {
           pos: { x: obj.pos.x + 6, y: obj.pos.y, z: obj.pos.z + 6 },
           challenge,
@@ -401,6 +653,7 @@ export function stepEncounters(
         for (let p = 0; p < state.pickups.length; p++) {
           state.pickups[p].magnetized = true;
         }
+        state.activeBannerText = 'SHRINE OF SUCC: VACUUMING ALL LOOT!';
         events.push({
           type: 'interactable_used',
           tick: state.tick,
@@ -417,15 +670,19 @@ export function stepEncounters(
         obj.used = true;
         obj.active = false;
         state.difficultyMultiplier += 0.15;
+        const instantGold = Math.round((35 + minutes * 12) * Math.max(1, player.stats.GoldMultiplier));
+        player.gold += instantGold;
         player.buffs.push({
           id: `greed_shrine:${obj.id}`,
           remainingSec: 999999,
           modifiers: [
             { stat: 'GoldMultiplier', add: 0.25, sourceId: 'ShrineGreed' },
             { stat: 'XpMultiplier', add: 0.2, sourceId: 'ShrineGreed' },
+            { stat: 'Difficulty', flat: 0.1, sourceId: 'ShrineGreed' },
           ],
         });
         recalcStats?.();
+        state.activeBannerText = `GREED SHRINE: +${instantGold} GOLD & +DIFFICULTY!`;
         events.push({
           type: 'interactable_used',
           tick: state.tick,
@@ -451,14 +708,14 @@ export function stepEncounters(
         });
         dispatchItemTrigger(state, catalog, 'OnInteract', { pos: { ...obj.pos }, recalcStats }, rng, events);
         if (state.pendingOffer === null) {
-          state.pendingOffer = generateShrineOffer(state, rng, false, wrenchStacks, 'moai');
+          state.pendingOffer = generateMoaiItemOffer(state, catalog, rng);
           const fromPhase = state.phase;
-          state.phase = 'level_up';
+          state.phase = 'chest_open';
           events.push({
             type: 'phase_changed',
             tick: state.tick,
             from: fromPhase,
-            to: 'level_up',
+            to: 'chest_open',
           });
         }
         break;
@@ -467,12 +724,29 @@ export function stepEncounters(
       case 'ShrineChallenge': {
         obj.used = true;
         obj.active = false;
+        const waveEnemy = getChallengeWaveEnemyId(state.mapId);
         for (let k = 0; k < 4; k++) {
-          spawnEnemyEntity(state, catalog, 'GoblinStrong', terrain, rng, events, {
+          spawnEnemyEntity(state, catalog, waveEnemy, terrain, rng, events, {
             isElite: true,
             challenge,
           });
         }
+        // Spawn bonus free reward Loot Chest right next to the Challenge Shrine!
+        const chestPos = terrain.clampToArena({ x: obj.pos.x + 3.5, y: obj.pos.y, z: obj.pos.z }, 4);
+        const chestSample = terrain.sample(chestPos.x, chestPos.z);
+        state.interactables.push({
+          id: state.nextEntityId++,
+          kind: 'Chest',
+          variant: 'free',
+          pos: { x: chestPos.x, y: chestSample.height, z: chestPos.z },
+          radius: 3.4,
+          used: false,
+          active: true,
+          chargeProgress: 0,
+          chargeDurationSec: 0,
+          costGold: 0,
+        });
+        state.activeBannerText = 'CHALLENGE SHRINE: ELITE AMBUSH + BONUS FREE CHEST!';
         events.push({
           type: 'interactable_used',
           tick: state.tick,
@@ -488,16 +762,21 @@ export function stepEncounters(
       case 'ShrineCursed': {
         obj.used = true;
         obj.active = false;
+        // Boss Curse: adds an extra Stage Boss on BossSpawner + grants immediate Damage & Loot boost!
         player.buffs.push({
           id: `cursed_shrine:${obj.id}`,
           remainingSec: 999999,
           modifiers: [
             { stat: 'DamageMultiplier', mult: 0.25, sourceId: 'ShrineCursed' },
-            { stat: 'MaxHealth', flat: -20, sourceId: 'ShrineCursed' },
+            { stat: 'Luck', flat: 0.2, sourceId: 'ShrineCursed' },
           ],
         });
         recalcStats?.();
-        player.hp = Math.min(player.hp, player.maxHp);
+        const bonusItem = rollChestItem(state, catalog, rng, 0.4);
+        if (bonusItem) {
+          grantPlayerItem(state, bonusItem, 1, recalcStats);
+        }
+        state.activeBannerText = 'BOSS CURSE INVOKED: EXTRA BOSS & FORBIDDEN LOOT!';
         events.push({
           type: 'interactable_used',
           tick: state.tick,
@@ -513,15 +792,6 @@ export function stepEncounters(
       case 'ShrineBalance': {
         obj.used = true;
         obj.active = false;
-        player.buffs.push({
-          id: `balance_shrine:${obj.id}`,
-          remainingSec: 999999,
-          modifiers: [
-            { stat: 'DamageMultiplier', mult: 0.1, sourceId: 'ShrineBalance' },
-            { stat: 'Armor', flat: 0.1, sourceId: 'ShrineBalance' },
-          ],
-        });
-        recalcStats?.();
         events.push({
           type: 'interactable_used',
           tick: state.tick,
@@ -531,26 +801,50 @@ export function stepEncounters(
           pos: { ...obj.pos },
         });
         dispatchItemTrigger(state, catalog, 'OnInteract', { pos: { ...obj.pos }, recalcStats }, rng, events);
+        if (state.pendingOffer === null) {
+          state.pendingOffer = generateBalanceShrineOffer(state, rng);
+          const fromPhase = state.phase;
+          state.phase = 'level_up';
+          events.push({
+            type: 'phase_changed',
+            tick: state.tick,
+            from: fromPhase,
+            to: 'level_up',
+          });
+        }
         break;
       }
 
-      case 'ShadyGuy':
-      case 'Microwave': {
-        if (player.gold < obj.costGold) break;
-        player.gold -= obj.costGold;
-        obj.used = true;
-        obj.active = false;
-        const itemId = rollChestItem(state, catalog, rng);
-        if (itemId) {
-          grantPlayerItem(state, itemId, 1, recalcStats);
-        }
+      case 'ShadyGuy': {
+        if (state.pendingOffer !== null) break;
+        state.pendingOffer = generateShadyGuyOffer(state, catalog, rng, obj);
+        const fromPhase = state.phase;
+        state.phase = 'merchant';
         events.push({
-          type: 'interactable_used',
+          type: 'phase_changed',
           tick: state.tick,
-          interactableId: obj.id,
-          kind: obj.kind,
-          variant: obj.variant,
-          pos: { ...obj.pos },
+          from: fromPhase,
+          to: 'merchant',
+        });
+        dispatchItemTrigger(state, catalog, 'OnInteract', { pos: { ...obj.pos }, recalcStats }, rng, events);
+        break;
+      }
+
+      case 'Microwave': {
+        if (state.pendingOffer !== null) break;
+        const mwOffer = generateMicrowaveOffer(state, catalog, obj);
+        if (mwOffer.choices.length === 0) {
+          state.activeBannerText = 'MICROWAVE NEEDS AT LEAST 2 SAME-RARITY ITEMS!';
+          break;
+        }
+        state.pendingOffer = mwOffer;
+        const fromPhase = state.phase;
+        state.phase = 'microwave';
+        events.push({
+          type: 'phase_changed',
+          tick: state.tick,
+          from: fromPhase,
+          to: 'microwave',
         });
         dispatchItemTrigger(state, catalog, 'OnInteract', { pos: { ...obj.pos }, recalcStats }, rng, events);
         break;
@@ -561,7 +855,8 @@ export function stepEncounters(
 
 /**
  * Steps all pickups: bounce physics, magnet pull within PickupRange, collection of XP/Gold/Silver/
- * Health/Magnet/Nuke/FreezeClock/Rage/Haste/Stonks/Shield/Keys, and level-up trigger checks.
+ * Health/Magnet/Nuke/FreezeClock/Rage/Haste/Stonks/Shield/Keys, ShatteredWisdom XP AoE slice,
+ * and level-up trigger checks.
  */
 export function stepPickups(
   state: SimState,
@@ -587,7 +882,6 @@ export function stepPickups(
     const p = state.pickups[i];
     p.ageSec += dt;
 
-    // Despawn very old uncollected basic XP/gold orbs to protect perf
     if (p.ageSec > 90 && !p.magnetized && p.kind !== 'crypt_key' && p.kind !== 'boss_key') {
       state.pickups.splice(i, 1);
       continue;
@@ -657,7 +951,16 @@ export function stepPickups(
       case 'health': {
         const healAmt = Math.max(p.value, Math.round(player.maxHp * 0.25));
         const before = player.hp;
-        player.hp = Math.min(player.maxHp, player.hp + healAmt);
+        const newHp = player.hp + healAmt;
+        if (newHp > player.maxHp) {
+          player.hp = player.maxHp;
+          if (player.stats.Overheal > 0) {
+            const cap = player.maxHp * Math.min(1.5, player.stats.Overheal);
+            player.overheal = Math.min(cap, player.overheal + (newHp - player.maxHp));
+          }
+        } else {
+          player.hp = newHp;
+        }
         const actual = player.hp - before;
         if (actual > 0) {
           events.push({
@@ -706,7 +1009,7 @@ export function stepPickups(
         for (let eIdx = 0; eIdx < state.enemies.length; eIdx++) {
           const enemy = state.enemies[eIdx];
           if (enemy.hp <= 0 || enemy.enemyId === 'GhostInvincible') continue;
-          const nukeDmg = enemy.isBoss ? enemy.maxHp * 0.15 : 500 + 80 * player.level;
+          const nukeDmg = enemy.isBoss ? enemy.maxHp * 0.12 : 500 + 80 * player.level;
           applyDamageToEnemy(
             state,
             catalog,
@@ -791,6 +1094,9 @@ export function stepPickups(
 
       case 'crypt_key': {
         player.hasCryptKey = true;
+        state.cryptUnlocked = true;
+        grantPlayerItem(state, 'CryptKey', 1, recalcStats);
+        state.activeBannerText = 'CRYPT KEY OBTAINED — SEEK THE CRYPT ALTAR!';
         break;
       }
 
@@ -812,12 +1118,15 @@ export function stepPickups(
       state,
       catalog,
       'OnPickup',
-      { pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z }, recalcStats },
+      {
+        pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+        onEnemyKilled: onKill,
+        recalcStats,
+      },
       rng,
       events,
     );
   }
 
-  // Check if collected XP triggered a level up
   checkAndTriggerLevelUp(state, catalog, rng, events, recalcStats, shopLevels, challenge);
 }

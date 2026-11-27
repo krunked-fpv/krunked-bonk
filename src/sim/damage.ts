@@ -12,7 +12,8 @@ import {
   type SimState,
   type StatBlock,
 } from '../contracts/index';
-import { dispatchItemTrigger } from './items';
+import { resolveCanonicalItemId } from '../data/items';
+import { dispatchItemTrigger, triggerHolyBookRadiance } from './items';
 
 export interface ApplyDamageOptions {
   skipItemProcs?: boolean;
@@ -26,8 +27,9 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 function getItemStacks(player: Readonly<PlayerState>, itemId: string): number {
+  const canonical = resolveCanonicalItemId(itemId);
   for (let i = 0; i < player.items.length; i++) {
-    if (player.items[i].itemId === itemId) {
+    if (resolveCanonicalItemId(player.items[i].itemId) === canonical) {
       return player.items[i].stacks;
     }
   }
@@ -68,6 +70,29 @@ export function isBossLikeEnemy(target: Readonly<EnemyState>): boolean {
 }
 
 /**
+ * Checks whether a boss currently has an active invulnerability shield:
+ * - Big Bob (`GhostKing`) during Darkness Phase (`state.darknessActive === true`)
+ * - Final Boss (`FinalBoss`) while any activated Boss Pylon remains uncleansed
+ */
+export function isTargetInvulnerable(
+  state: Readonly<SimState>,
+  target: Readonly<EnemyState>,
+): boolean {
+  if (target.enemyId === 'GhostKing' && state.darknessActive) {
+    return true;
+  }
+  if (target.enemyId === 'FinalBoss' && target.phaseIndex > 0) {
+    for (let i = 0; i < state.pylons.length; i++) {
+      const py = state.pylons[i];
+      if (py.active && !py.cleansed) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Applies a debuff to an enemy with StatusDuration scaling and CC diminishing returns.
  * Emits `debuff_applied` on success.
  */
@@ -101,17 +126,15 @@ export function applyDebuffToEnemy(
 
   let effectiveDuration = Math.max(0.2, durationSec * statusDurationMult);
   if (isCrowdControl) {
-    // Diminishing returns from innate CC resistance
     effectiveDuration *= clamp(1 - ccResistance, 0.12, 1.0);
   }
 
   const existing = target.debuffs.find((d) => d.type === debuff);
   if (existing) {
     if (isCrowdControl) {
-      // Diminishing returns on repeated CC application while already active
       effectiveDuration *= 0.5;
     }
-    const maxStacks = debuff === 'Bloodmark' ? 5 : debuff === 'Poison' || debuff === 'Burn' ? 20 : 5;
+    const maxStacks = debuff === 'Bloodmark' ? 5 : debuff === 'Poison' || debuff === 'Burn' ? 25 : 5;
     existing.stacks = Math.min(maxStacks, existing.stacks + Math.max(1, Math.floor(stacksToAdd)));
     existing.remainingSec = Math.max(existing.remainingSec, effectiveDuration);
     if (dps > 0) {
@@ -168,8 +191,8 @@ export function applyDebuffToEnemy(
 }
 
 /**
- * Pure deterministic DamageContainer evaluation matching SPEC.md:
- * base -> DamageMultiplier/role/archetype -> Element -> Crit/Megacrit (GiantFork 4x+) -> Bonker 20x -> Execute.
+ * Pure deterministic DamageContainer evaluation:
+ * base -> DamageMultiplier/role/archetype/Bloodmark -> Element -> Crit/Megacrit (GiantFork 4x+) -> Bonker 20x -> Execute.
  */
 export function resolveDamage(
   state: Readonly<SimState>,
@@ -179,6 +202,22 @@ export function resolveDamage(
 ): DamageResult {
   const stats = state.player.stats;
   const baseDamage = Math.max(0, input.baseDamage);
+
+  if (isTargetInvulnerable(state, target)) {
+    return {
+      baseDamage,
+      afterStatMult: 0,
+      afterElementMult: 0,
+      critTier: 0,
+      isCrit: false,
+      isMegacrit: false,
+      isBonker: false,
+      isExecute: false,
+      finalDamage: 0,
+      procRollCount: 0,
+      debuffsApplied: [],
+    };
+  }
 
   let statMult = Math.max(0.05, stats.DamageMultiplier);
   if (input.isMelee) {
@@ -203,6 +242,11 @@ export function resolveDamage(
     statMult *= 1 + 0.15 * Math.min(5, bloodmark.stacks);
   }
 
+  // Frostwalker / shattered bonus vs frozen targets
+  if (input.weaponId === 'WeaponFrostWalker' && target.debuffs.some((d) => d.type === 'Freeze')) {
+    statMult *= 1.45;
+  }
+
   const afterStatMult = baseDamage * statMult;
   const elemMult = getElementDamageMultiplier(stats, input.element);
   const afterElementMult = afterStatMult * elemMult;
@@ -210,8 +254,11 @@ export function resolveDamage(
   // Crit & Megacrit resolution
   let critTier = 0;
   let dmg = afterElementMult;
+  const isBullseyeMarked = target.eliteTags.includes('Bullseye');
+
   if (!input.isDot) {
-    const totalCritChance = Math.max(0, stats.CritChance + (input.bonusCritChance ?? 0));
+    const bullseyeBonus = isBullseyeMarked ? 1.0 : 0;
+    const totalCritChance = Math.max(0, stats.CritChance + (input.bonusCritChance ?? 0) + bullseyeBonus);
     const guaranteedTiers = Math.floor(totalCritChance);
     const fracChance = totalCritChance - guaranteedTiers;
     critTier = guaranteedTiers + (fracChance > 0 && rng() < fracChance ? 1 : 0);
@@ -245,22 +292,27 @@ export function resolveDamage(
     }
   }
 
-  // Execute threshold check
+  // Execute threshold check (supports Dexecutioner innate execute chance + ExecuteThreshold stat)
   let isExecute = false;
+  const isUnexecutable =
+    target.enemyId === 'GhostInvincible' ||
+    target.enemyId === 'GhostKing' ||
+    target.enemyId === 'FinalBoss' ||
+    target.enemyId === 'GhostRed' ||
+    target.enemyId === 'GhostPurple';
+
+  const dexecutionerChance =
+    input.weaponId === 'WeaponDexecutioner' && !input.isDot && !input.isProcDamage ? 0.08 : 0;
   const execThreshold = clamp(stats.ExecuteThreshold, 0, 0.5);
-  if (
-    !input.isDot &&
-    execThreshold > 0 &&
-    target.maxHp > 0 &&
-    target.hp > 0 &&
-    target.enemyId !== 'GhostInvincible'
-  ) {
+
+  if (!input.isDot && target.maxHp > 0 && target.hp > 0 && !isUnexecutable) {
     const postHp = target.hp - dmg;
-    if (postHp > 0 && postHp / target.maxHp <= execThreshold) {
+    const thresholdHit = execThreshold > 0 && postHp > 0 && postHp / target.maxHp <= execThreshold;
+    const instantExecHit = dexecutionerChance > 0 && rng() < dexecutionerChance;
+    if (thresholdHit || instantExecHit) {
       isExecute = true;
       if (isBossLikeEnemy(target)) {
-        // Bosses take a massive capped chunk instead of instant deletion
-        dmg += Math.min(target.maxHp * 0.12, dmg * 2.0);
+        dmg += Math.min(target.maxHp * 0.12, Math.max(dmg * 2.0, 120));
       } else {
         dmg = target.hp;
       }
@@ -289,9 +341,10 @@ export function resolveDamage(
 }
 
 /**
- * Full damage application: resolves DamageResult, mutates target HP, applies Echo recording,
- * Lifesteal, weapon debuffs, summary metrics, events, OnHit/OnCrit/OnMegacrit/OnBonker procs,
- * and invokes onEnemyKilled if target HP reaches 0.
+ * Full damage application: resolves DamageResult, enforces boss invulnerability shields,
+ * applies Echo recording, Lifesteal (+Chonkplate Overheal, +BloodyCleaver Bloodmark, +HolyBook radiance),
+ * Snek instant poison burst, Bush Bullseye burst, weapon debuffs, summary metrics, events,
+ * OnHit/OnCrit/OnMegacrit/OnBonker procs, and invokes onEnemyKilled if target HP reaches 0.
  */
 export function applyDamageToEnemy(
   state: SimState,
@@ -337,12 +390,21 @@ export function applyDamageToEnemy(
     }
   }
 
-  // Lifesteal on non-DoT hits
+  // Lifesteal on non-DoT hits (+Chonkplate Overheal, +BloodyCleaver Bloodmark, +HolyBook radiance)
   if (!input.isDot && state.player.stats.Lifesteal > 0 && !state.player.dead) {
     const stealAmt = Math.min(state.player.maxHp * 0.1, result.finalDamage * state.player.stats.Lifesteal);
     if (stealAmt >= 0.25) {
       const before = state.player.hp;
-      state.player.hp = Math.min(state.player.maxHp, state.player.hp + stealAmt);
+      const newHp = state.player.hp + stealAmt;
+      if (newHp > state.player.maxHp) {
+        state.player.hp = state.player.maxHp;
+        if (state.player.stats.Overheal > 0) {
+          const maxOverheal = state.player.maxHp * Math.min(1.5, state.player.stats.Overheal);
+          state.player.overheal = Math.min(maxOverheal, state.player.overheal + (newHp - state.player.maxHp));
+        }
+      } else {
+        state.player.hp = newHp;
+      }
       const healed = state.player.hp - before;
       if (healed >= 1) {
         events.push({
@@ -351,6 +413,27 @@ export function applyDamageToEnemy(
           pos: { x: state.player.pos.x, y: state.player.pos.y, z: state.player.pos.z },
           amount: Math.round(healed * 10) / 10,
         });
+        if (depth < 1) {
+          triggerHolyBookRadiance(state, catalog, healed, rng, events, options?.onEnemyKilled, options?.recalcStats);
+        }
+      }
+      // BloodyCleaver: Lifesteal procs immediately stack Bloodmark!
+      const cleaverStacks = getItemStacks(state.player, 'BloodyCleaver');
+      if (cleaverStacks > 0 && target.hp > 0 && depth < 1) {
+        applyDebuffToEnemy(
+          state,
+          catalog,
+          target,
+          'Bloodmark',
+          6.0,
+          0,
+          rng,
+          events,
+          'item:BloodyCleaver',
+          1,
+          false,
+          depth + 1,
+        );
       }
     }
   }
@@ -368,6 +451,52 @@ export function applyDamageToEnemy(
     isExecute: result.isExecute,
     weaponId: input.weaponId,
   });
+
+  // Bush Bullseye consumption: pop mark & unleash explosive sniper burst around target
+  const bullseyeIdx = target.eliteTags.indexOf('Bullseye');
+  if (bullseyeIdx >= 0 && !input.isDot && !input.isProcDamage && depth < 1) {
+    target.eliteTags.splice(bullseyeIdx, 1);
+    const popDmg = Math.max(25, result.finalDamage * 0.65);
+    state.areaEffects.push({
+      id: state.nextEntityId++,
+      kind: 'nova',
+      weaponId: 'passive:Bullseye',
+      ownerIsPlayer: true,
+      pos: { x: target.pos.x, y: target.pos.y + 1.0, z: target.pos.z },
+      radius: 5.5,
+      height: 2.2,
+      lifeSec: 0,
+      maxLifeSec: 0.35,
+      tickTimer: 99,
+      tickIntervalSec: 99,
+      damage: popDmg,
+      element: 'Physical',
+      procCoefficient: 0,
+    });
+    for (let i = 0; i < state.enemies.length; i++) {
+      const other = state.enemies[i];
+      if (other.hp <= 0 || other.id === target.id) continue;
+      const dx = other.pos.x - target.pos.x;
+      const dz = other.pos.z - target.pos.z;
+      if (dx * dx + dz * dz <= (5.5 + other.radius) ** 2) {
+        applyDamageToEnemy(
+          state,
+          catalog,
+          other,
+          {
+            baseDamage: popDmg,
+            element: 'Physical',
+            procCoefficient: 0,
+            weaponId: 'passive:Bullseye',
+            isProcDamage: true,
+          },
+          rng,
+          events,
+          { skipItemProcs: true, depth: depth + 1, onEnemyKilled: options?.onEnemyKilled, recalcStats: options?.recalcStats },
+        );
+      }
+    }
+  }
 
   // Apply innate weapon debuff on hit
   if (!input.isDot && !input.isProcDamage && input.weaponId && target.hp > 0) {
@@ -393,7 +522,7 @@ export function applyDamageToEnemy(
         }
       }
       if (applied) {
-        const dps = d.dpsScale ? result.afterElementMult * d.dpsScale : 0;
+        const dps = d.dpsScale ? Math.max(4, result.afterElementMult * d.dpsScale) : 0;
         if (
           applyDebuffToEnemy(
             state,
@@ -413,6 +542,32 @@ export function applyDamageToEnemy(
           result.debuffsApplied.push(d.type);
         }
       }
+    }
+  }
+
+  // Snek legendary: 22% (+8%/stack) chance on hit to instantly burst ALL poison damage on target!
+  const snekStacks = getItemStacks(state.player, 'Snek');
+  if (snekStacks > 0 && !input.isDot && !input.isProcDamage && target.hp > 0 && depth < 1) {
+    const poisonIdx = target.debuffs.findIndex((d) => d.type === 'Poison');
+    if (poisonIdx >= 0 && rng() < clamp(0.22 + 0.08 * (snekStacks - 1), 0, 0.85)) {
+      const pDebuff = target.debuffs[poisonIdx];
+      const burstDmg = Math.max(18, pDebuff.dps * pDebuff.stacks * Math.max(1.0, pDebuff.remainingSec));
+      target.debuffs.splice(poisonIdx, 1);
+      applyDamageToEnemy(
+        state,
+        catalog,
+        target,
+        {
+          baseDamage: burstDmg,
+          element: 'Poison',
+          procCoefficient: 0,
+          weaponId: 'item:SnekBurst',
+          isProcDamage: true,
+        },
+        rng,
+        events,
+        { skipItemProcs: true, depth: depth + 1, onEnemyKilled: options?.onEnemyKilled, recalcStats: options?.recalcStats },
+      );
     }
   }
 

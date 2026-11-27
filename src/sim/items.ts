@@ -12,6 +12,7 @@ import type {
   SimState,
   Vec3,
 } from '../contracts/index';
+import { getItemById, resolveCanonicalItemId } from '../data/items';
 import { applyDamageToEnemy, applyDebuffToEnemy, isBossLikeEnemy } from './damage';
 
 export interface ItemTriggerContext {
@@ -21,9 +22,12 @@ export interface ItemTriggerContext {
   procCoefficient?: number;
   pos?: Vec3;
   depth?: number;
+  isExecute?: boolean;
   onEnemyKilled?: (enemy: EnemyState, isExecute: boolean, weaponId?: string) => void;
   recalcStats?: () => void;
 }
+
+const PERMANENT_BUFF_SEC = 999999;
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -37,12 +41,38 @@ function distSq3(a: Vec3, b: Vec3): number {
 }
 
 export function getPlayerItemStacks(player: Readonly<PlayerState>, itemId: string): number {
+  const canonical = resolveCanonicalItemId(itemId);
   for (let i = 0; i < player.items.length; i++) {
-    if (player.items[i].itemId === itemId) {
+    if (resolveCanonicalItemId(player.items[i].itemId) === canonical) {
       return player.items[i].stacks;
     }
   }
   return 0;
+}
+
+/**
+ * Computes max-level cap lift from `Pot` (weapons) or `WizardsHat` (tomes):
+ * 1st stack = +10 max levels, each additional stack gives 1 less, min +1 per stack.
+ */
+export function computeCapLiftFromItemStacks(stacks: number): number {
+  const n = Math.max(0, Math.floor(stacks));
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    total += Math.max(1, 10 - i);
+  }
+  return total;
+}
+
+export function getWeaponMaxLevelBonus(player: Readonly<PlayerState>): number {
+  return computeCapLiftFromItemStacks(getPlayerItemStacks(player, 'Pot'));
+}
+
+export function getTomeMaxLevelBonus(player: Readonly<PlayerState>): number {
+  return computeCapLiftFromItemStacks(getPlayerItemStacks(player, 'WizardsHat'));
+}
+
+export function hasAnvil(player: Readonly<PlayerState>): boolean {
+  return getPlayerItemStacks(player, 'Anvil') > 0;
 }
 
 export function grantPlayerItem(
@@ -51,22 +81,50 @@ export function grantPlayerItem(
   stacks = 1,
   recalcStats?: () => void,
 ): PlayerItemStack {
+  const canonical = resolveCanonicalItemId(itemId);
+  const def = getItemById(canonical);
+  const maxStacks = def?.maxStacks && def.maxStacks > 0 ? def.maxStacks : Infinity;
   const count = Math.max(1, Math.floor(stacks));
-  let existing = state.player.items.find((it) => it.itemId === itemId);
+
+  let existing = state.player.items.find((it) => resolveCanonicalItemId(it.itemId) === canonical);
   if (existing) {
-    existing.stacks += count;
+    existing.stacks = Math.min(maxStacks, existing.stacks + count);
   } else {
     existing = {
-      itemId,
-      stacks: count,
+      itemId: canonical,
+      stacks: Math.min(maxStacks, count),
       internalCooldown: 0,
       triggerCounter: 0,
       procCount: 0,
     };
     state.player.items.push(existing);
   }
+
+  // Quest keys immediately update player key flags
+  if (canonical === 'CryptKey') {
+    state.player.hasCryptKey = true;
+    state.cryptUnlocked = true;
+  }
+
   recalcStats?.();
   return existing;
+}
+
+export function removePlayerItemStack(
+  state: SimState,
+  itemId: string,
+  count = 1,
+  recalcStats?: () => void,
+): boolean {
+  const canonical = resolveCanonicalItemId(itemId);
+  const idx = state.player.items.findIndex((it) => resolveCanonicalItemId(it.itemId) === canonical);
+  if (idx < 0) return false;
+  state.player.items[idx].stacks -= Math.max(1, Math.floor(count));
+  if (state.player.items[idx].stacks <= 0) {
+    state.player.items.splice(idx, 1);
+  }
+  recalcStats?.();
+  return true;
 }
 
 export function stepItemCooldowns(state: SimState, dt: number): void {
@@ -74,6 +132,65 @@ export function stepItemCooldowns(state: SimState, dt: number): void {
   for (let i = 0; i < items.length; i++) {
     if (items[i].internalCooldown > 0) {
       items[i].internalCooldown = Math.max(0, items[i].internalCooldown - dt);
+    }
+  }
+}
+
+/**
+ * HolyBook special: any player heal radiates a Holy damage pulse to nearby enemies.
+ */
+export function triggerHolyBookRadiance(
+  state: SimState,
+  catalog: Readonly<GameCatalog>,
+  healedAmount: number,
+  rng: () => number,
+  events: SimEvent[],
+  onEnemyKilled?: (enemy: EnemyState, isExecute: boolean, weaponId?: string) => void,
+  recalcStats?: () => void,
+): void {
+  const stacks = getPlayerItemStacks(state.player, 'HolyBook');
+  if (stacks <= 0 || healedAmount <= 0) return;
+
+  const radius = (7.5 + stacks * 1.2) * Math.max(0.5, state.player.stats.AreaSize);
+  const dmg = Math.max(12 * stacks, healedAmount * (2.5 + stacks));
+  const origin = state.player.pos;
+
+  state.areaEffects.push({
+    id: state.nextEntityId++,
+    kind: 'nova',
+    weaponId: 'item:HolyBook',
+    ownerIsPlayer: true,
+    pos: { x: origin.x, y: origin.y + 0.8, z: origin.z },
+    radius,
+    height: 2.2,
+    lifeSec: 0,
+    maxLifeSec: 0.35,
+    tickTimer: 99,
+    tickIntervalSec: 99,
+    damage: dmg,
+    element: 'Holy',
+    procCoefficient: 0,
+  });
+
+  for (let i = 0; i < state.enemies.length; i++) {
+    const e = state.enemies[i];
+    if (e.hp <= 0) continue;
+    if (distSq3(origin, e.pos) <= (radius + e.radius) ** 2) {
+      applyDamageToEnemy(
+        state,
+        catalog,
+        e,
+        {
+          baseDamage: dmg,
+          element: 'Holy',
+          procCoefficient: 0,
+          weaponId: 'item:HolyBook',
+          isProcDamage: true,
+        },
+        rng,
+        events,
+        { skipItemProcs: true, depth: 2, onEnemyKilled, recalcStats },
+      );
     }
   }
 }
@@ -158,11 +275,32 @@ function upsertPlayerBuff(
   remainingSec: number,
   modifiers: PlayerState['buffs'][number]['modifiers'],
   recalcStats?: () => void,
+  stackAdditive = false,
+  maxCapValue?: number,
 ): void {
   const existing = player.buffs.find((b) => b.id === id);
   if (existing) {
     existing.remainingSec = Math.max(existing.remainingSec, remainingSec);
-    existing.modifiers = modifiers;
+    if (stackAdditive && existing.modifiers.length === modifiers.length) {
+      for (let i = 0; i < existing.modifiers.length; i++) {
+        const cur = existing.modifiers[i];
+        const inc = modifiers[i];
+        if (inc.add !== undefined) {
+          const next = (cur.add ?? 0) + inc.add;
+          cur.add = maxCapValue !== undefined ? Math.min(maxCapValue, next) : next;
+        }
+        if (inc.mult !== undefined) {
+          const next = (cur.mult ?? 0) + inc.mult;
+          cur.mult = maxCapValue !== undefined ? Math.min(maxCapValue, next) : next;
+        }
+        if (inc.flat !== undefined) {
+          const next = (cur.flat ?? 0) + inc.flat;
+          cur.flat = maxCapValue !== undefined ? Math.min(maxCapValue, next) : next;
+        }
+      }
+    } else {
+      existing.modifiers = modifiers;
+    }
   } else {
     player.buffs.push({ id, remainingSec, modifiers });
   }
@@ -191,22 +329,32 @@ function executeItemEffect(
   switch (effect.type) {
     case 'ModifyStat': {
       if (!effect.stat) break;
+      const isPermanent = (effect.durationSec ?? 0) >= 900000;
+      const isIdleJuice = itemId === 'IdleJuice';
       upsertPlayerBuff(
         player,
         `item_mod:${itemId}:${effect.stat}`,
         effect.durationSec ?? 4.0,
         [{ stat: effect.stat, add: val, sourceId: `item:${itemId}` }],
         ctx.recalcStats,
+        isPermanent || isIdleJuice,
+        isIdleJuice ? 0.6 * stacks : undefined,
       );
       break;
     }
 
     case 'DealDamage': {
-      const target = ctx.target && ctx.target.hp > 0 ? ctx.target : findNearestEnemy(state, origin, 14);
+      const target = ctx.target && ctx.target.hp > 0 ? ctx.target : findNearestEnemy(state, origin, 18);
       if (!target) break;
-      const dmgAmount = effect.damageScale && ctx.damageDealt
-        ? Math.max(val, ctx.damageDealt * effect.damageScale)
-        : val;
+      let dmgAmount =
+        effect.damageScale && ctx.damageDealt
+          ? Math.max(val, ctx.damageDealt * effect.damageScale)
+          : val;
+      // CursedDoll scales with enemy Max HP (capped vs bosses)
+      if (itemId === 'CursedDoll') {
+        const pctDmg = target.maxHp * Math.min(0.25, 0.05 * stacks);
+        dmgAmount = isBossLikeEnemy(target) ? Math.min(pctDmg, 180 * stacks) : Math.max(val, pctDmg);
+      }
       applyDamageToEnemy(
         state,
         catalog,
@@ -231,7 +379,7 @@ function executeItemEffect(
     }
 
     case 'SpawnProjectile': {
-      const target = findNearestEnemy(state, player.pos, 38);
+      const target = findNearestEnemy(state, player.pos, 42);
       const dirX = target ? target.pos.x - player.pos.x : -Math.sin(player.yaw);
       const dirY = target ? target.pos.y + target.height * 0.5 - (player.pos.y + 1.2) : 0;
       const dirZ = target ? target.pos.z - player.pos.z : -Math.cos(player.yaw);
@@ -253,7 +401,7 @@ function executeItemEffect(
         bouncesLeft: effect.bounces ?? 0,
         pierceLeft: 0,
         lifeSec: 0,
-        maxLifeSec: effect.durationSec ?? 2.2,
+        maxLifeSec: effect.durationSec ?? 2.5,
         procCoefficient: 0,
         homingTargetId: target ? target.id : null,
         hitEntityIds: [],
@@ -262,10 +410,16 @@ function executeItemEffect(
     }
 
     case 'SpawnNova': {
-      const radius = (effect.radius ?? 6.5) * Math.max(0.4, player.stats.AreaSize);
-      const dmgAmount = effect.damageScale && ctx.damageDealt
-        ? Math.max(val, ctx.damageDealt * effect.damageScale)
-        : val;
+      const extraRad = itemId === 'BobsLantern' ? (stacks - 1) * 1.5 : 0;
+      const radius = ((effect.radius ?? 6.5) + extraRad) * Math.max(0.4, player.stats.AreaSize);
+      let dmgAmount =
+        effect.damageScale && ctx.damageDealt
+          ? Math.max(val, ctx.damageDealt * effect.damageScale)
+          : val;
+      if (itemId === 'Cactus' || itemId === 'QuinsMask') {
+        dmgAmount += player.stats.Thorns * (1.2 + 0.4 * stacks);
+      }
+
       state.areaEffects.push({
         id: state.nextEntityId++,
         kind: 'nova',
@@ -283,11 +437,28 @@ function executeItemEffect(
         procCoefficient: 0,
       });
 
-      const rSq = radius * radius;
       for (let i = 0; i < state.enemies.length; i++) {
         const e = state.enemies[i];
         if (e.hp <= 0) continue;
-        if (distSq3(origin, e.pos) <= (radius + e.radius) * (radius + e.radius) && distSq3(origin, e.pos) <= rSq + e.radius * e.radius * 4 + 2 * radius * e.radius) {
+        const reach = radius + e.radius;
+        if (distSq3(origin, e.pos) <= reach * reach) {
+          // SpeedBoi slows/freezes enemies inside blast
+          if (itemId === 'SpeedBoi') {
+            applyDebuffToEnemy(state, catalog, e, 'Freeze', 3.5, 0, rng, events, 'item:SpeedBoi', 1, false, depth + 1);
+          }
+          // ToxicBarrel poisons every enemy caught in the blast
+          if (itemId === 'ToxicBarrel') {
+            applyDebuffToEnemy(state, catalog, e, 'Poison', 5.0, 10 + 6 * stacks, rng, events, 'item:ToxicBarrel', 2, false, depth + 1);
+          }
+          // Power Gloves knocks enemies back violently
+          if (itemId === 'GlovePower') {
+            const dx = e.pos.x - origin.x;
+            const dz = e.pos.z - origin.z;
+            const d = Math.hypot(dx, dz) || 1;
+            const kb = (e.isBoss ? 3.5 : 14) * Math.max(0.5, player.stats.Knockback);
+            e.vel.x += (dx / d) * kb;
+            e.vel.z += (dz / d) * kb;
+          }
           applyDamageToEnemy(
             state,
             catalog,
@@ -316,9 +487,10 @@ function executeItemEffect(
     case 'ChainLightning': {
       const maxChains = Math.max(1, (effect.chains ?? 3) + Math.floor(player.stats.ChainCount));
       const jumpRadius = (effect.radius ?? 10) * Math.max(0.5, player.stats.AttackRange);
-      const baseChainDmg = effect.damageScale && ctx.damageDealt
-        ? Math.max(val, ctx.damageDealt * effect.damageScale)
-        : val;
+      const baseChainDmg =
+        effect.damageScale && ctx.damageDealt
+          ? Math.max(val, ctx.damageDealt * effect.damageScale)
+          : val;
 
       const visited = new Set<number>();
       let currentPos = origin;
@@ -374,10 +546,11 @@ function executeItemEffect(
 
     case 'ApplyDebuff': {
       if (!effect.debuff) break;
-      const target = ctx.target && ctx.target.hp > 0 ? ctx.target : findNearestEnemy(state, origin, 12);
+      const target = ctx.target && ctx.target.hp > 0 ? ctx.target : findNearestEnemy(state, origin, 14);
       if (!target) break;
       const dur = effect.durationSec ?? 3.0;
       const dps = effect.debuff === 'Poison' || effect.debuff === 'Burn' ? val : 0;
+      const addStacks = itemId === 'Snek' ? 2 : 1;
       applyDebuffToEnemy(
         state,
         catalog,
@@ -388,7 +561,7 @@ function executeItemEffect(
         rng,
         events,
         `item:${itemId}`,
-        1,
+        addStacks,
         false,
         depth + 1,
       );
@@ -402,7 +575,7 @@ function executeItemEffect(
       if (newHp > player.maxHp) {
         player.hp = player.maxHp;
         if (player.stats.Overheal > 0) {
-          const maxOverheal = player.maxHp * Math.min(1.0, player.stats.Overheal);
+          const maxOverheal = player.maxHp * Math.min(1.5, player.stats.Overheal);
           player.overheal = Math.min(maxOverheal, player.overheal + (newHp - player.maxHp));
         }
       } else {
@@ -416,6 +589,9 @@ function executeItemEffect(
           pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
           amount: Math.round(healed * 10) / 10,
         });
+        if (depth < 1) {
+          triggerHolyBookRadiance(state, catalog, healed, rng, events, ctx.onEnemyKilled, ctx.recalcStats);
+        }
       }
       break;
     }
@@ -469,9 +645,10 @@ function executeItemEffect(
     case 'ExtraProcRoll': {
       const target = ctx.target;
       if (!target || target.hp <= 0) break;
-      const echoDmg = effect.damageScale && ctx.damageDealt
-        ? Math.max(val, ctx.damageDealt * effect.damageScale)
-        : val;
+      const echoDmg =
+        effect.damageScale && ctx.damageDealt
+          ? Math.max(val, ctx.damageDealt * effect.damageScale)
+          : val;
       applyDamageToEnemy(
         state,
         catalog,
@@ -497,7 +674,15 @@ function executeItemEffect(
 
     case 'Execute': {
       const target = ctx.target;
-      if (!target || target.hp <= 0 || target.enemyId === 'GhostInvincible') break;
+      if (
+        !target ||
+        target.hp <= 0 ||
+        target.enemyId === 'GhostInvincible' ||
+        target.enemyId === 'GhostKing' ||
+        target.enemyId === 'FinalBoss'
+      ) {
+        break;
+      }
       const pct = target.maxHp > 0 ? target.hp / target.maxHp : 1;
       if (pct <= clamp(val, 0.05, 0.5)) {
         const execDmg = isBossLikeEnemy(target) ? target.maxHp * 0.1 : target.hp;
@@ -517,7 +702,7 @@ function executeItemEffect(
           {
             skipItemProcs: true,
             depth: depth + 1,
-            onEnemyKilled: ctx.onEnemyKilled,
+            onEnemyKilled: (killed, _ex, wid) => ctx.onEnemyKilled?.(killed, true, wid),
             recalcStats: ctx.recalcStats,
           },
         );
@@ -526,33 +711,47 @@ function executeItemEffect(
     }
 
     case 'Revive': {
+      // ZaWarudo: freeze every living enemy across the arena in time and break 1 stack!
+      if (itemId === 'ZaWarudo') {
+        for (let i = 0; i < state.enemies.length; i++) {
+          const e = state.enemies[i];
+          if (e.hp <= 0) continue;
+          applyDebuffToEnemy(state, catalog, e, 'Freeze', 6.0, 0, rng, events, 'item:ZaWarudo', 1, false, depth + 1);
+          e.stunTimer = Math.max(e.stunTimer, 4.0);
+        }
+        state.activeBannerText = 'ZA WARUDO! TIME STOPPED!';
+        removePlayerItemStack(state, 'ZaWarudo', 1, ctx.recalcStats);
+      }
       player.revivesLeft += Math.max(1, Math.floor(val));
       break;
     }
 
     case 'SpawnMinion': {
-      const target = findNearestEnemy(state, player.pos, 32);
+      const target = findNearestEnemy(state, player.pos, 38);
       const spawnPos: Vec3 = {
         x: player.pos.x + (rng() - 0.5) * 3,
         y: player.pos.y + 1.5,
         z: player.pos.z + (rng() - 0.5) * 3,
       };
+      const dirX = target ? target.pos.x - spawnPos.x : -Math.sin(player.yaw);
+      const dirZ = target ? target.pos.z - spawnPos.z : -Math.cos(player.yaw);
+      const d = Math.hypot(dirX, dirZ) || 1;
       state.projectiles.push({
         id: state.nextEntityId++,
         weaponId: `minion:${itemId}`,
         ownerIsPlayer: true,
         pos: { ...spawnPos },
         prevPos: { ...spawnPos },
-        vel: { x: 0, y: 0, z: 0 },
-        radius: 0.7,
+        vel: { x: (dirX / d) * 18, y: 0, z: (dirZ / d) * 18 },
+        radius: 0.75,
         damage: val,
-        element: effect.element ?? 'Holy',
+        element: effect.element ?? 'Void',
         knockback: 0.8,
         critBonus: 0,
         bouncesLeft: 1,
         pierceLeft: 2,
         lifeSec: 0,
-        maxLifeSec: effect.durationSec ?? 5.0,
+        maxLifeSec: effect.durationSec ?? 5.5,
         procCoefficient: 0.4,
         homingTargetId: target ? target.id : null,
         hitEntityIds: [],
@@ -639,6 +838,21 @@ function evaluateHook(
   if (hook.trigger !== trigger) return false;
   if (stackRef && hook.cooldownSec && stackRef.internalCooldown > 0) return false;
 
+  // Campfire & IdleJuice only activate while standing still!
+  if ((itemId === 'Campfire' || itemId === 'IdleJuice') && trigger === 'OnTick') {
+    const horizSpd = Math.hypot(state.player.vel.x, state.player.vel.z);
+    if (horizSpd > 1.2) {
+      if (itemId === 'IdleJuice') {
+        const idx = state.player.buffs.findIndex((b) => b.id === 'item_mod:IdleJuice:DamageMultiplier');
+        if (idx >= 0) {
+          state.player.buffs.splice(idx, 1);
+          ctx.recalcStats?.();
+        }
+      }
+      return false;
+    }
+  }
+
   const counter = stackRef ? stackRef.triggerCounter + 1 : 1;
   if (stackRef) {
     stackRef.triggerCounter = counter;
@@ -652,7 +866,6 @@ function evaluateHook(
     }
   }
 
-  // Chance scaled by stack, procCoefficient, Luck, and ExtraProcRolls
   let chance = clamp(
     hook.chance + (hook.chancePerStack ?? 0) * Math.max(0, stacks - 1),
     0,
@@ -667,7 +880,6 @@ function evaluateHook(
     chance = clamp(chance * procCoeff, 0, 1);
   }
   if (chance > 0 && chance < 1 && state.player.stats.Luck > 0) {
-    // Luck smoothly improves failed odds without overflowing 1.0
     chance = 1 - Math.pow(1 - chance, 1 + state.player.stats.Luck * 0.25);
   }
 
@@ -690,7 +902,12 @@ function evaluateHook(
   if (stackRef) {
     stackRef.procCount += 1;
     if (hook.cooldownSec && hook.cooldownSec > 0) {
-      stackRef.internalCooldown = hook.cooldownSec;
+      // Bob's Light reduces cooldown per stack (min 1.5s)
+      const effectiveCd =
+        itemId === 'BobsLantern'
+          ? Math.max(1.5, hook.cooldownSec - (stacks - 1) * 0.5)
+          : hook.cooldownSec;
+      stackRef.internalCooldown = effectiveCd;
     }
   }
 
@@ -708,6 +925,64 @@ function evaluateHook(
     pos: eventPos,
   });
 
+  // Special item stateful hooks
+  if (itemId === 'DemonicBlood' && trigger === 'OnKill') {
+    upsertPlayerBuff(
+      state.player,
+      'item_stack:DemonicBlood',
+      PERMANENT_BUFF_SEC,
+      [{ stat: 'MaxHealth', flat: 2 * stacks, sourceId: 'item:DemonicBlood' }],
+      ctx.recalcStats,
+      true,
+      200 * stacks,
+    );
+  } else if (itemId === 'DemonicSoul' && trigger === 'OnKill') {
+    upsertPlayerBuff(
+      state.player,
+      'item_stack:DemonicSoul',
+      PERMANENT_BUFF_SEC,
+      [{ stat: 'DamageMultiplier', mult: 0.005 * stacks, sourceId: 'item:DemonicSoul' }],
+      ctx.recalcStats,
+      true,
+      0.5 * stacks,
+    );
+  } else if (itemId === 'Mirror' && trigger === 'OnHurt') {
+    state.player.invulnTimer = Math.max(state.player.invulnTimer, 1.2);
+  } else if (
+    itemId === 'Kevin' &&
+    (trigger === 'OnHit' || trigger === 'OnTick') &&
+    (ctx.depth ?? 0) <= 1 &&
+    !state.player.dead
+  ) {
+    // Kevin punches you for 1 non-lethal damage, triggering OnHurt/Thorns/CowardsCloak/LockIn!
+    if (state.player.hp > 1) {
+      state.player.hp = Math.max(1, state.player.hp - 1);
+      events.push({
+        type: 'player_hurt',
+        tick: state.tick,
+        pos: { x: state.player.pos.x, y: state.player.pos.y, z: state.player.pos.z },
+        amount: 1,
+        blockedByShield: 0,
+        remainingHp: state.player.hp,
+      });
+      dispatchItemTrigger(
+        state,
+        catalog,
+        'OnHurt',
+        {
+          target: ctx.target,
+          damageDealt: 1,
+          pos: { x: state.player.pos.x, y: state.player.pos.y, z: state.player.pos.z },
+          depth: (ctx.depth ?? 0) + 1,
+          onEnemyKilled: ctx.onEnemyKilled,
+          recalcStats: ctx.recalcStats,
+        },
+        rng,
+        events,
+      );
+    }
+  }
+
   for (let e = 0; e < hook.effects.length; e++) {
     executeItemEffect(state, catalog, itemId, stacks, hook.effects[e], ctx, rng, events);
   }
@@ -716,7 +991,7 @@ function evaluateHook(
 
 /**
  * Evaluates all declarative item & passive Trigger-Hook nodes matching `trigger`.
- * Returns the number of hooks that successfully triggered.
+ * Also handles Joe's Dagger execute kill permanent damage stacking.
  */
 export function dispatchItemTrigger(
   state: SimState,
@@ -729,19 +1004,34 @@ export function dispatchItemTrigger(
   const depth = ctx.depth ?? 0;
   if (depth > 2) return 0;
 
+  // Joe's Dagger: executing an enemy permanently stacks +2% DamageMultiplier per stack
+  if (trigger === 'OnKill' && ctx.isExecute) {
+    const joeStacks = getPlayerItemStacks(state.player, 'JoesDagger');
+    if (joeStacks > 0) {
+      upsertPlayerBuff(
+        state.player,
+        'item_stack:JoesDagger',
+        PERMANENT_BUFF_SEC,
+        [{ stat: 'DamageMultiplier', mult: 0.02 * joeStacks, sourceId: 'item:JoesDagger' }],
+        ctx.recalcStats,
+        true,
+        3.0,
+      );
+    }
+  }
+
   let triggeredCount = 0;
 
-  // Build quick lookup from catalog.items (small array, fast linear or map)
   const itemDefById = new Map<string, ItemDef>();
   for (let i = 0; i < catalog.items.length; i++) {
     itemDefById.set(catalog.items[i].id, catalog.items[i]);
   }
 
-  // Evaluate owned item hooks
   for (let i = 0; i < state.player.items.length; i++) {
     const stack = state.player.items[i];
     if (stack.stacks <= 0) continue;
-    const def = itemDefById.get(stack.itemId);
+    const canonical = resolveCanonicalItemId(stack.itemId);
+    const def = itemDefById.get(canonical);
     if (!def?.hooks || def.hooks.length === 0) continue;
 
     for (let h = 0; h < def.hooks.length; h++) {
@@ -764,7 +1054,6 @@ export function dispatchItemTrigger(
     }
   }
 
-  // Evaluate character passive declarative hooks if any
   const charDef = catalog.characters.find((c) => c.id === state.characterId);
   if (charDef?.passive.hooks && charDef.passive.hooks.length > 0) {
     for (let h = 0; h < charDef.passive.hooks.length; h++) {

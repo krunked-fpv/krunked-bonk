@@ -4,15 +4,30 @@ import { CHARACTERS, CHARACTER_BY_ID, getCharacterById } from './characters';
 import { HATS, HAT_BY_ID, SKINS, SKIN_BY_ID, getHatById, getSkinById } from './cosmetics';
 import { ENEMIES, ENEMY_BY_ID, getEnemyById } from './enemies';
 import { INTERACTABLES, INTERACTABLE_BY_KIND, getInteractableByKind } from './interactables';
-import { ITEMS, ITEM_BY_ID, getItemById } from './items';
-import { MAPS, MAP_BY_ID, STAGE_TIMELINES, getMapById, type StageTimelineEventDef } from './maps';
+import { ITEMS, ITEM_BY_ID, getItemById, resolveCanonicalItemId } from './items';
+import {
+  MAPS,
+  MAP_BY_ID,
+  STAGE_DURATIONS_BY_TIER,
+  STAGE_TIMELINES,
+  getMapById,
+  type StageTimelineEventDef,
+} from './maps';
 import { QUESTS, QUEST_BY_ID, getQuestById } from './quests';
 import { SHOP_UPGRADES, SHOP_UPGRADE_BY_ID, getShopUpgradeById, getShopUpgradeCost } from './shop';
 import { TOMES, TOME_BY_ID, getTomeById } from './tomes';
-import { WEAPONS, WEAPON_BY_ID, getWeaponById } from './weapons';
+import {
+  WEAPONS,
+  WEAPON_BY_ID,
+  WEAPON_UPGRADE_POOLS,
+  getWeaponById,
+  type WeaponUpgradeOptionDef,
+} from './weapons';
 
 /**
- * Unified read-only KRUNKEDBONK Wave 1 GameCatalog & fast O(1) ID lookup maps.
+ * Unified read-only KRUNKEDBONK Full-Catalog GameCatalog & fast O(1) ID lookup maps.
+ * Exact locked counts: 21 chars, 30 weapons, 26 tomes, 87 items (22C/21R/20E/22L/2Q),
+ * 52 enemies, 4 maps, 12 interactables, 8 shop upgrades, 18 challenges.
  */
 export const GAME_CATALOG: Readonly<GameCatalog> = Object.freeze({
   characters: CHARACTERS,
@@ -35,6 +50,7 @@ export {
   getCharacterById,
   WEAPONS,
   WEAPON_BY_ID,
+  WEAPON_UPGRADE_POOLS,
   getWeaponById,
   TOMES,
   TOME_BY_ID,
@@ -42,11 +58,13 @@ export {
   ITEMS,
   ITEM_BY_ID,
   getItemById,
+  resolveCanonicalItemId,
   ENEMIES,
   ENEMY_BY_ID,
   getEnemyById,
   MAPS,
   MAP_BY_ID,
+  STAGE_DURATIONS_BY_TIER,
   STAGE_TIMELINES,
   getMapById,
   INTERACTABLES,
@@ -70,4 +88,4 @@ export {
   getQuestById,
 };
 
-export type { StageTimelineEventDef };
+export type { StageTimelineEventDef, WeaponUpgradeOptionDef };
