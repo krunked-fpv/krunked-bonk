@@ -11,9 +11,14 @@ import type {
   UiNavAction,
 } from '../contracts';
 import { HudOverlay } from './HudOverlay';
-import { MenusOverlay, type MenusViewState, type UiCallbacks } from './MenusOverlay';
+import {
+  MenusOverlay,
+  type BoomboxTrackOption,
+  type MenusViewState,
+  type UiCallbacks,
+} from './MenusOverlay';
 
-export type { UiCallbacks, MenusViewState };
+export type { UiCallbacks, MenusViewState, BoomboxTrackOption };
 
 export interface UiUpdateParams {
   phase: GamePhase;
@@ -26,6 +31,7 @@ export interface UiUpdateParams {
   gamepadConnected: boolean;
   customPackLoaded: boolean;
   customPackName?: string | null;
+  boomboxTracks?: readonly BoomboxTrackOption[];
   perf?: Readonly<DebugPerfMetrics>;
   fireHeld?: boolean;
   maxWeaponSlots?: number;
@@ -47,6 +53,31 @@ const DRAFT_PHASES: ReadonlySet<GamePhase> = new Set([
   'merchant',
   'microwave',
 ]);
+
+function isClippedByScrollAncestor(el: HTMLElement): boolean {
+  let parent = el.parentElement;
+  const r = el.getBoundingClientRect();
+  while (parent) {
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(parent) : null;
+    if (
+      style &&
+      (style.overflowY === 'auto' ||
+        style.overflowY === 'scroll' ||
+        style.overflowX === 'auto' ||
+        style.overflowX === 'scroll')
+    ) {
+      const pr = parent.getBoundingClientRect();
+      if (r.bottom <= pr.top + 2 || r.top >= pr.bottom - 2) {
+        return true;
+      }
+      if (r.right <= pr.left + 2 || r.left >= pr.right - 2) {
+        return true;
+      }
+    }
+    parent = parent.parentElement;
+  }
+  return false;
+}
 
 export class UiController {
   private readonly callbacks: UiCallbacks;
@@ -84,7 +115,13 @@ export class UiController {
    * Returns the contextual interact prompt string (if any) so InputManager / TouchOverlay can sync it.
    */
   public update(params: UiUpdateParams): string | null {
+    const phaseChanged = params.phase !== this.currentPhase;
     this.currentPhase = params.phase;
+
+    if (phaseChanged) {
+      // Reset stale focus ID on screen transitions so default focus lands cleanly
+      this.focusedId = null;
+    }
 
     const showHud = params.state !== null && HUD_VISIBLE_PHASES.has(params.phase);
     this.hud.setVisible(showHud);
@@ -116,6 +153,7 @@ export class UiController {
       gamepadConnected: params.gamepadConnected,
       customPackLoaded: params.customPackLoaded,
       customPackName: params.customPackName,
+      boomboxTracks: params.boomboxTracks,
     });
 
     if (rebuilt) {
@@ -172,7 +210,10 @@ export class UiController {
       case 'down':
       case 'left':
       case 'right': {
-        if ((action === 'left' || action === 'right') && this.tryAdjustFocusedControl(action === 'right' ? 1 : -1)) {
+        if (
+          (action === 'left' || action === 'right') &&
+          this.tryAdjustFocusedControl(action === 'right' ? 1 : -1)
+        ) {
           return;
         }
         this.moveFocus(action);
@@ -209,14 +250,25 @@ export class UiController {
 
       case 'reroll': {
         if (DRAFT_PHASES.has(this.currentPhase)) {
-          this.menus.setBanishArmed(false);
-          this.callbacks.onRerollDraft();
+          const rerollBtn = this.menus
+            .getRoot()
+            ?.querySelector<HTMLButtonElement>('[data-kb-focus-id="draft-reroll"]');
+          if (!rerollBtn || !rerollBtn.disabled) {
+            this.menus.setBanishArmed(false);
+            this.callbacks.onRerollDraft();
+          }
         }
         return;
       }
 
       case 'banish': {
         if (DRAFT_PHASES.has(this.currentPhase)) {
+          const banishBtn = this.menus
+            .getRoot()
+            ?.querySelector<HTMLButtonElement>('[data-kb-focus-id="draft-banish"]');
+          if (!banishBtn || banishBtn.disabled) {
+            return;
+          }
           const draftIdxAttr = this.focusedEl?.getAttribute('data-kb-draft-index');
           if (draftIdxAttr !== null && draftIdxAttr !== undefined) {
             const idx = Number(draftIdxAttr);
@@ -226,21 +278,28 @@ export class UiController {
               return;
             }
           }
-          // Otherwise toggle banish mode via button
-          const banishBtn = this.menus
-            .getRoot()
-            ?.querySelector<HTMLButtonElement>('[data-kb-focus-id="draft-banish"]');
-          if (banishBtn && !banishBtn.disabled) {
-            banishBtn.click();
-          }
+          banishBtn.click();
         }
         return;
       }
 
       case 'skip': {
         if (DRAFT_PHASES.has(this.currentPhase)) {
-          this.menus.setBanishArmed(false);
-          this.callbacks.onSkipDraft();
+          const leaveBtn = this.menus
+            .getRoot()
+            ?.querySelector<HTMLButtonElement>('[data-kb-focus-id="draft-leave"]');
+          if (leaveBtn && !leaveBtn.disabled) {
+            this.menus.setBanishArmed(false);
+            leaveBtn.click();
+            return;
+          }
+          const skipBtn = this.menus
+            .getRoot()
+            ?.querySelector<HTMLButtonElement>('[data-kb-focus-id="draft-skip"]');
+          if (!skipBtn || !skipBtn.disabled) {
+            this.menus.setBanishArmed(false);
+            this.callbacks.onSkipDraft();
+          }
         }
         return;
       }
@@ -264,8 +323,20 @@ export class UiController {
       case 'character_select':
       case 'map_select':
       case 'shop':
+      case 'quests':
         this.callbacks.onBackToTitle();
         break;
+      case 'level_up':
+      case 'merchant':
+      case 'microwave': {
+        const leaveBtn = this.menus
+          .getRoot()
+          ?.querySelector<HTMLButtonElement>('[data-kb-focus-id="draft-leave"]');
+        if (leaveBtn && !leaveBtn.disabled) {
+          leaveBtn.click();
+        }
+        break;
+      }
       default:
         break;
     }
@@ -280,7 +351,10 @@ export class UiController {
       const max = Number(el.max || '100');
       const step = Number(el.step || '1');
       const curr = Number(el.value || '0');
-      const next = Math.max(min, Math.min(max, Math.round((curr + delta * step) * 1000) / 1000));
+      const next = Math.max(
+        min,
+        Math.min(max, Math.round((curr + delta * step) * 1000) / 1000),
+      );
       if (next !== curr) {
         el.value = String(next);
         el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -326,7 +400,8 @@ export class UiController {
       }
     }
 
-    this.setFocus(focusables[0], false);
+    const preferred = focusables.find((el) => el.getAttribute('data-kb-focus-default') === 'true');
+    this.setFocus(preferred ?? focusables[0], false);
   }
 
   private clearFocus(): void {
@@ -357,15 +432,14 @@ export class UiController {
     if (focusables.length === 0) return;
     const currIdx = this.focusedEl ? focusables.indexOf(this.focusedEl) : -1;
     const nextIdx =
-      currIdx < 0
-        ? 0
-        : (currIdx + delta + focusables.length) % focusables.length;
+      currIdx < 0 ? 0 : (currIdx + delta + focusables.length) % focusables.length;
     this.setFocus(focusables[nextIdx]);
   }
 
   /**
-   * 2D spatial nearest-neighbor navigation with clean linear fallback when layout
-   * geometry is collapsed (e.g. headless DOM tests) or at screen edges.
+   * 2D spatial nearest-neighbor navigation with scroll-clip awareness for
+   * multi-column scrollable grids (21-char grid, Skins/Hats, Challenges, Quests)
+   * and clean linear fallback when layout geometry is collapsed.
    */
   private moveFocus(dir: 'up' | 'down' | 'left' | 'right'): void {
     const focusables = this.getFocusables();
@@ -384,6 +458,7 @@ export class UiController {
 
     const cx = currRect.left + currRect.width * 0.5;
     const cy = currRect.top + currRect.height * 0.5;
+    const isHorizontal = dir === 'left' || dir === 'right';
 
     let best: HTMLElement | null = null;
     let bestScore = Infinity;
@@ -392,6 +467,7 @@ export class UiController {
       if (candidate === this.focusedEl) continue;
       const r = candidate.getBoundingClientRect();
       if (r.width <= 0 && r.height <= 0) continue;
+
       const tx = r.left + r.width * 0.5;
       const ty = r.top + r.height * 0.5;
       const dx = tx - cx;
@@ -417,8 +493,10 @@ export class UiController {
         cross = Math.abs(dx);
       }
 
-      // Strongly prefer aligned controls along the travel axis
-      const score = primary + cross * 2.4;
+      // Strongly prefer aligned controls along the travel axis; when crossing columns
+      // horizontally, prefer controls currently visible inside scroll viewports.
+      const clipPenalty = isHorizontal && isClippedByScrollAncestor(candidate) ? 420 : 0;
+      const score = primary + cross * 2.4 + clipPenalty;
       if (score < bestScore) {
         bestScore = score;
         best = candidate;
@@ -430,7 +508,7 @@ export class UiController {
       return;
     }
 
-    // Wrap cleanly when reaching an edge in up/down navigation
+    // Wrap cleanly when reaching an edge in navigation
     if (dir === 'down' || dir === 'right') {
       this.stepFocusLinear(1);
     } else {
