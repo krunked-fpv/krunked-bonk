@@ -1,0 +1,30 @@
+{
+  "name": "krunkedbonk",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "extract": "tsx tools/extract-assets.ts",
+    "oracle": "tsx tools/oracle-dump.ts",
+    "dev": "vite",
+    "play": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify:assets": "tsx scripts/verify/verify-assets.ts",
+    "verify:sim": "tsx scripts/verify/verify-sim.ts",
+    "verify": "npm run test && npm run verify:assets && npm run verify:sim",
+    "build": "vite build",
+    "export:dna": "tsx export-dna.ts"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/three": "^0.170.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  }
+}

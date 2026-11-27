@@ -1,0 +1,23 @@
+# Local docs & planning artifacts (keep README.md tracked)
+*.md
+!README.md
+
+# DNA & local playtest artifacts
+dna/
+export-dna.ts
+scripts/verify/playtest-100.ts
+scripts/verify/verify-all.ts
+
+# Local user-supplied asset pack & extractor outputs (NEVER commit)
+.krunkedbonk-assets/
+
+# Build, dependencies, tooling & backups
+node_modules/
+dist/
+.venv/
+*.bak
+.vite/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
