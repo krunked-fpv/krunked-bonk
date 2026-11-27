@@ -7,6 +7,7 @@ import {
   type GamepadProfile,
   type InputDeviceKind,
   type InteractableKind,
+  type MapId,
   type RenderSettings,
   type SimState,
 } from '../contracts';
@@ -47,96 +48,228 @@ function formatCompact(n: number): string {
   return String(v);
 }
 
-const SHORT_TAG_MAP: Record<string, string> = {
-  // Weapons
+function shortMapLabel(mapId: MapId): string {
+  switch (mapId) {
+    case 'Forest':
+      return 'FOREST';
+    case 'Desert':
+      return 'DESERT';
+    case 'Graveyard':
+      return 'GRAVEYARD';
+    case 'FinalBossMap':
+      return 'CITADEL';
+    default:
+      return String(mapId).toUpperCase();
+  }
+}
+
+/**
+ * Crisp <=4-character HUD tags covering ALL 30 weapons, 26 tomes, and 87 items
+ * (plus spelling/asset aliases so nothing falls back to ugly raw ID truncation).
+ */
+export const SHORT_TAG_MAP: Readonly<Record<string, string>> = Object.freeze({
+  // --- ALL 30 WEAPONS ---
   WeaponFireStaff: 'FIRE',
   WeaponBone: 'BONE',
   WeaponSword: 'SWRD',
-  WeaponAura: 'AURA',
   WeaponRevolver: 'REVO',
-  WeaponChunkers: 'ROCK',
-  WeaponLightningBolt: 'BOLT',
-  WeaponSniper: 'SNIP',
-  WeaponBow: 'BOW',
-  WeaponKatana: 'KTNA',
+  WeaponAura: 'AURA',
   WeaponAxe: 'AXE',
-  WeaponScythe: 'SCYT',
-  WeaponPoisonFlask: 'POIS',
+  WeaponBow: 'BOW',
   WeaponAegis: 'AEGS',
-  WeaponTornado: 'TORN',
-  WeaponBlackHole: 'VOID',
-  WeaponFrostwalker: 'FRST',
-  WeaponDexecutioner: 'EXEC',
-  WeaponDice: 'DICE',
-  WeaponBananarang: 'BANA',
-  WeaponBloodMagic: 'BLOD',
-  WeaponCorruptedSword: 'CURS',
-  WeaponWirelessDagger: 'DAGR',
+  WeaponLightningBolt: 'BOLT',
+  WeaponLightningStaff: 'BOLT',
+  WeaponFlameWalker: 'FLAM',
   WeaponFlamewalker: 'FLAM',
-  WeaponDragonsBreath: 'DRGN',
-  WeaponSpaceNoodle: 'NOOD',
-  WeaponHeroSword: 'HERO',
-  WeaponMines: 'MINE',
+  WeaponSluttyRocket: 'RCKT',
   WeaponRocket: 'RCKT',
+  WeaponRockets: 'RCKT',
+  WeaponBananarang: 'BANA',
+  WeaponTornado: 'TORN',
+  WeaponDexecutioner: 'EXEC',
+  WeaponSniper: 'SNIP',
+  WeaponFrostWalker: 'FRST',
+  WeaponFrostwalker: 'FRST',
+  WeaponSpaceNoodle: 'NOOD',
+  WeaponDragonsBreath: 'DRGN',
+  WeaponChunkers: 'ROCK',
+  WeaponMines: 'MINE',
+  WeaponMine: 'MINE',
+  WeaponPoisonFlask: 'POIS',
+  WeaponBlackHole: 'VOID',
+  WeaponKatana: 'KTNA',
+  WeaponBloodMagic: 'BLOD',
+  WeaponWirelessDagger: 'DAGR',
+  WeaponBluetoothDagger: 'DAGR',
+  WeaponDice: 'DICE',
+  WeaponHeroSword: 'HERO',
+  WeaponCorruptedSword: 'CURS',
+  WeaponCorruptSword: 'CURS',
   WeaponShotgun: 'SHOT',
-  // Tomes
+  WeaponScythe: 'SCYT',
+
+  // --- ALL 26 TOMES ---
   TomeDamage: 'DMG',
-  TomeCooldown: 'CD',
-  TomeAttackSpeed: 'SPD',
-  TomeHealth: 'HP',
   TomeAgility: 'AGI',
-  TomePrecision: 'CRIT',
-  TomeXP: 'XP',
+  TomeCooldown: 'CD',
   TomeQuantity: 'QTY',
-  TomeSize: 'SIZE',
-  TomeArmor: 'ARM',
-  TomeLuck: 'LUCK',
-  TomeShield: 'SHLD',
-  TomeEvasion: 'EVAD',
-  TomeRegen: 'REGN',
-  TomeLifesteal: 'LIFE',
-  TomeGold: 'GOLD',
-  TomeSilver: 'SLVR',
-  TomePickupRange: 'MAG',
-  TomeCurse: 'CURS',
   TomeKnockback: 'KB',
+  TomeArmor: 'ARM',
+  TomeHealth: 'HP',
+  TomeRegen: 'REGN',
+  TomeRegeneration: 'REGN',
+  TomeSize: 'SIZE',
+  TomeProjectileSpeed: 'PSPD',
   TomeDuration: 'DUR',
+  TomeEvasion: 'EVAD',
+  TomeAttraction: 'MAG',
+  TomePickupRange: 'MAG',
+  TomeLuck: 'LUCK',
+  TomeXP: 'XP',
+  TomeXp: 'XP',
+  TomeGolden: 'GOLD',
+  TomeGold: 'GOLD',
+  TomePrecision: 'CRIT',
+  TomeShield: 'SHLD',
+  TomeBlood: 'LIFE',
+  TomeLifesteal: 'LIFE',
+  TomeThorns: 'THRN',
+  TomeCursed: 'CURS',
+  TomeCurse: 'CURS',
+  TomeSilver: 'SLVR',
+  TomeBalance: 'BAL',
+  TomeChaos: 'CHAO',
+  TomeGamba: 'GAMB',
+  TomeGambler: 'GAMB',
+  TomeHoarder: 'HORD',
+  // Legacy aliases
+  TomeAttackSpeed: 'SPD',
   TomeBounce: 'BNC',
   TomeCritDamage: 'CDMG',
-  // Items
-  GiantFork: 'FORK',
-  Bonker: 'BONK',
-  OverpoweredLamp: 'LAMP',
-  Wrench: 'WRNC',
-  Beacon: 'BECN',
+
+  // --- ALL 87 ITEMS ---
+  // Common (22)
+  Key: 'KEY',
+  SlipperyRing: 'SLIP',
+  GymSauce: 'GYM',
+  Battery: 'BATT',
+  ForbiddenJuice: 'JUIC',
+  MoldyCheese: 'CHSE',
   Cheese: 'CHSE',
+  GoldenGlove: 'GGLV',
+  Ghost: 'GHST',
+  TurboSocks: 'SOCK',
+  Clover: 'CLVR',
+  Skuleg: 'SKUL',
+  Oats: 'OATS',
+  CursedDoll: 'DOLL',
+  Borgar: 'BRGR',
+  Medkit: 'MED',
+  BossBuster: 'BOSS',
+  TacticalGlasses: 'SPEC',
+  Cactus: 'CACT',
+  IceCrystal: 'ICRY',
+  TimeBracelet: 'WTCH',
+  Wrench: 'WRNC',
+  OldMask: 'MASK',
+
+  // Rare (21)
+  Beer: 'BEER',
+  CowardsCloak: 'CLOK',
+  PhantomShroud: 'SHRD',
+  DemonBlade: 'DBLD',
+  GoldenSneakers: 'SHOE',
+  DemonicBlood: 'BLOD',
+  GoldenShield: 'GSHD',
+  Feathers: 'FTHR',
+  FlappyFeathers: 'FTHR',
+  EchoShard: 'ECHO',
+  Backpack: 'PACK',
+  Campfire: 'CAMP',
+  ElectricPlug: 'PLUG',
+  BrassKnuckles: 'KNUK',
+  IdleJuice: 'IDLE',
+  UnstableTransfusion: 'TRNS',
+  CreditCardRed: 'RCRD',
+  LeechingCrystal: 'LECH',
+  GloveLightning: 'ZAPG',
+  GlovePoison: 'PGLV',
+  MoldyGloves: 'PGLV',
+  Beacon: 'BECN',
+  Pumpkin: 'PMPK',
+
+  // Epic (20)
+  SpikyShield: 'SPIK',
+  GrandmasSecretTonic: 'TONC',
+  DemonicSoul: 'DSOL',
+  BeefyRing: 'BEEF',
+  SluttyCannon: 'CNON',
+  HomingCannon: 'CNON',
+  ShatteredWisdom: 'SHAT',
+  ShatteredKnowledge: 'SHAT',
+  Rollerblades: 'SKAT',
+  TurboSkates: 'SKAT',
+  EagleClaw: 'CLAW',
+  Scarf: 'SCRF',
+  BobDead: 'BOBD',
+  Mirror: 'MIRR',
+  Gasmask: 'GASM',
+  GasMask: 'GASM',
+  ToxicBarrel: 'BARL',
+  Kevin: 'KEVN',
+  GamerGoggles: 'GOGL',
+  CreditCardGreen: 'GCRD',
+  GloveBlood: 'SLRP',
+  SlurpGloves: 'SLRP',
+  GloveCurse: 'CGLV',
+  CursedGrabbies: 'CGLV',
+  QuinsMask: 'QUIN',
+  BobsLantern: 'BLIT',
+  BobsLight: 'BLIT',
+
+  // Legendary (22)
+  Bonker: 'BONK',
+  GiantFork: 'FORK',
   SpicyMeatball: 'MEAT',
+  Chonkplate: 'CHNK',
   LightningOrb: 'ZAP',
   IceCube: 'ICE',
-  GymSauce: 'GYM',
-  TurboSocks: 'SOCK',
-  MoldyGloves: 'GLOV',
-  CursedDoll: 'DOLL',
-  JoeDagger: 'JOE',
-  GoldenGlove: 'GOLD',
-  Anvil: 'ANVL',
-  Mirror: 'MIRR',
-  PhoenixFeather: 'PHNX',
-  Borgar: 'BRGR',
-  Battery: 'BATT',
-  Key: 'KEY',
-  Medkit: 'MED',
-  Clover: 'CLVR',
-  CreditCard: 'CARD',
-  SoulHarvester: 'SOUL',
+  Dragonfire: 'DRGF',
   ZaWarudo: 'TIME',
-};
+  OverpoweredLamp: 'LAMP',
+  SuckyMagnet: 'SMAG',
+  Anvil: 'ANVL',
+  EnergyCore: 'CORE',
+  SoulHarvester: 'SOUL',
+  JoesDagger: 'JOE',
+  JoeDagger: 'JOE',
+  SpeedBoi: 'SBOI',
+  HolyBook: 'HOLY',
+  BloodyCleaver: 'CLEV',
+  GlovePower: 'PWRG',
+  PowerGloves: 'PWRG',
+  GoldenRing: 'GRNG',
+  Snek: 'SNEK',
+  Pot: 'POT',
+  PotSteel: 'POT',
+  WizardsHat: 'WIZ',
 
-function shortTag(id: string, displayName: string | undefined, maxLen = 4): string {
+  // Quest (2)
+  CageKey: 'CKEY',
+  CageKeyMonke: 'CKEY',
+  CryptKey: 'CRYP',
+
+  // Extra aliases
+  PhoenixFeather: 'PHNX',
+  CreditCard: 'CARD',
+});
+
+export function shortTag(id: string, displayName: string | undefined, maxLen = 4): string {
   const mapped = SHORT_TAG_MAP[id];
   if (mapped) return mapped;
   const source = (displayName ?? id)
     .replace(/^Tome of\s+/i, '')
+    .replace(/\s+Tome$/i, '')
     .replace(/^Weapon/i, '')
     .replace(/^Tome/i, '')
     .replace(/[^a-zA-Z0-9 ]/g, '')
@@ -181,7 +314,15 @@ export class HudOverlay {
   private bossName: HTMLSpanElement | null = null;
   private bossHpText: HTMLSpanElement | null = null;
   private bossFill: HTMLDivElement | null = null;
-  private bossPylons: HTMLDivElement | null = null;
+
+  private pylonBar: HTMLDivElement | null = null;
+  private pylonLabel: HTMLSpanElement | null = null;
+  private pylonPips: HTMLDivElement | null = null;
+  private pylonStolenBadge: HTMLSpanElement | null = null;
+
+  private darknessBox: HTMLDivElement | null = null;
+  private darknessCount: HTMLSpanElement | null = null;
+  private darknessPips: HTMLDivElement | null = null;
 
   private bannerBox: HTMLDivElement | null = null;
   private weaponTray: HTMLDivElement | null = null;
@@ -220,6 +361,8 @@ export class HudOverlay {
   private lastWeaponSig = '';
   private lastTomeSig = '';
   private lastItemSig = '';
+  private lastPylonSig = '';
+  private lastDarknessSig = '';
   private lastBannerText = '';
   private activeInteractLabel: string | null = null;
 
@@ -243,7 +386,7 @@ export class HudOverlay {
     levelBadge.className = 'kb-hud-level-badge';
     levelBadge.textContent = 'LV. 1';
 
-    // Top-Center: Timer, Boss, Banner
+    // Top-Center: Timer + Boss/Pylon/Darkness/Banner Stack
     const topCenter = document.createElement('div');
     topCenter.className = 'kb-hud-top-center';
 
@@ -256,8 +399,12 @@ export class HudOverlay {
     timerTag.textContent = 'STAGE';
     timerBox.append(timerTag, timerValue);
 
+    const bossStack = document.createElement('div');
+    bossStack.className = 'kb-hud-boss-stack';
+
     const bossBox = document.createElement('div');
     bossBox.className = 'kb-hud-boss';
+    bossBox.setAttribute('data-kb-boss-hud', 'true');
     const bossHeader = document.createElement('div');
     bossHeader.className = 'kb-hud-boss-header';
     const bossName = document.createElement('span');
@@ -268,14 +415,43 @@ export class HudOverlay {
     const bossFill = document.createElement('div');
     bossFill.className = 'kb-hud-boss-fill';
     bossBar.appendChild(bossFill);
-    const bossPylons = document.createElement('div');
-    bossPylons.className = 'kb-hud-boss-pylons';
-    bossBox.append(bossHeader, bossBar, bossPylons);
+    bossBox.append(bossHeader, bossBar);
+
+    // Final Boss 11-Pylon Tracker HUD (positioned cleanly under Boss HP bar)
+    const pylonBar = document.createElement('div');
+    pylonBar.className = 'kb-hud-pylon-bar';
+    pylonBar.setAttribute('data-kb-pylons-hud', 'true');
+    const pylonLabel = document.createElement('span');
+    pylonLabel.className = 'kb-hud-pylon-label';
+    pylonLabel.textContent = 'PYLONS 0/11';
+    const pylonPips = document.createElement('div');
+    pylonPips.className = 'kb-hud-pylon-pips';
+    const pylonStolenBadge = document.createElement('span');
+    pylonStolenBadge.className = 'kb-hud-pylon-stolen';
+    pylonBar.append(pylonLabel, pylonPips, pylonStolenBadge);
+
+    // Big Bob Darkness HUD Pill (positioned cleanly under Boss HP bar)
+    const darknessBox = document.createElement('div');
+    darknessBox.className = 'kb-hud-darkness';
+    darknessBox.setAttribute('data-kb-darkness-hud', 'true');
+    const darknessText = document.createElement('span');
+    darknessText.className = 'kb-hud-darkness-text';
+    darknessText.textContent = 'DARKNESS ACTIVE — CHARGE LAMPS!';
+    const darknessMeta = document.createElement('div');
+    darknessMeta.className = 'kb-hud-darkness-meta';
+    const darknessPips = document.createElement('div');
+    darknessPips.className = 'kb-hud-darkness-pips';
+    const darknessCount = document.createElement('span');
+    darknessCount.className = 'kb-hud-darkness-count';
+    darknessCount.textContent = '0/6 LAMPS';
+    darknessMeta.append(darknessPips, darknessCount);
+    darknessBox.append(darknessText, darknessMeta);
 
     const bannerBox = document.createElement('div');
     bannerBox.className = 'kb-hud-banner';
 
-    topCenter.append(timerBox, bossBox, bannerBox);
+    bossStack.append(bossBox, pylonBar, darknessBox, bannerBox);
+    topCenter.append(timerBox, bossStack);
 
     // Top-Left: Weapon & Tome Trays
     const loadout = document.createElement('div');
@@ -425,7 +601,13 @@ export class HudOverlay {
     this.bossName = bossName;
     this.bossHpText = bossHpText;
     this.bossFill = bossFill;
-    this.bossPylons = bossPylons;
+    this.pylonBar = pylonBar;
+    this.pylonLabel = pylonLabel;
+    this.pylonPips = pylonPips;
+    this.pylonStolenBadge = pylonStolenBadge;
+    this.darknessBox = darknessBox;
+    this.darknessCount = darknessCount;
+    this.darknessPips = darknessPips;
     this.bannerBox = bannerBox;
     this.weaponTray = weaponTray;
     this.tomeTray = tomeTray;
@@ -491,7 +673,7 @@ export class HudOverlay {
       } else {
         const remaining = Math.max(0, state.stageDurationSec - state.simTimeSec);
         this.timerBox.classList.remove('is-final-swarm');
-        this.timerTag.textContent = `${state.mapId.toUpperCase()} T${state.mapTier}`;
+        this.timerTag.textContent = `${shortMapLabel(state.mapId)} T${state.mapTier}`;
         this.timerValue.textContent = formatClock(remaining);
       }
     }
@@ -536,7 +718,8 @@ export class HudOverlay {
     }
 
     if (this.passiveRow && this.passiveName && this.passiveVal && this.passiveFill) {
-      const hasPassiveMeter = typeof player.passiveMeter === 'number' && Number.isFinite(player.passiveMeter);
+      const hasPassiveMeter =
+        typeof player.passiveMeter === 'number' && Number.isFinite(player.passiveMeter);
       this.passiveRow.classList.toggle('is-active', hasPassiveMeter);
       if (hasPassiveMeter) {
         const charDef = catalog.characters.find((c) => c.id === state.characterId);
@@ -548,7 +731,7 @@ export class HudOverlay {
       }
     }
 
-    // 6. Weapon & Tome Slot Trays
+    // 6. Weapon & Tome Slot Trays + Item Strip
     const maxWeapons = ctx.maxWeaponSlots ?? Math.max(MAX_WEAPON_SLOTS, player.weapons.length);
     const maxTomes = ctx.maxTomeSlots ?? Math.max(MAX_TOME_SLOTS, player.tomes.length);
     this.updateWeaponTray(state, catalog, maxWeapons);
@@ -579,8 +762,10 @@ export class HudOverlay {
       }
     }
 
-    // 8. Boss HP Bar & Pylons
+    // 8. Boss HP Bar, Final Boss Pylon HUD, & Big Bob Darkness HUD
     this.updateBossBar(state, catalog);
+    this.updatePylonHud(state);
+    this.updateDarknessHud(state);
 
     // 9. Stage Event Banner
     if (this.bannerBox) {
@@ -606,7 +791,12 @@ export class HudOverlay {
     }
 
     // 11. Contextual Interact Prompt
-    this.activeInteractLabel = this.updateInteractPrompt(state, catalog, activeDevice, gamepadProfile);
+    this.activeInteractLabel = this.updateInteractPrompt(
+      state,
+      catalog,
+      activeDevice,
+      gamepadProfile,
+    );
     return this.activeInteractLabel;
   }
 
@@ -616,6 +806,8 @@ export class HudOverlay {
     this.lastWeaponSig = '';
     this.lastTomeSig = '';
     this.lastItemSig = '';
+    this.lastPylonSig = '';
+    this.lastDarknessSig = '';
     this.activeInteractLabel = null;
   }
 
@@ -640,6 +832,18 @@ export class HudOverlay {
     span.className = `kb-kinetic-pill ${extraClass}`;
     span.textContent = label;
     return span;
+  }
+
+  private createPixelLockIcon(): HTMLSpanElement {
+    const wrap = document.createElement('span');
+    wrap.className = 'kb-lock-icon';
+    wrap.setAttribute('aria-hidden', 'true');
+    const shackle = document.createElement('span');
+    shackle.className = 'kb-lock-shackle';
+    const body = document.createElement('span');
+    body.className = 'kb-lock-body';
+    wrap.append(shackle, body);
+    return wrap;
   }
 
   private updateWeaponTray(
@@ -677,7 +881,6 @@ export class HudOverlay {
         const name = document.createElement('div');
         name.className = 'kb-slot-name';
         name.textContent = shortTag(slot.weaponId, def?.displayName, 4);
-        box.title = `${def?.displayName ?? slot.weaponId} (Lv ${slot.level})`;
 
         const meta = document.createElement('div');
         meta.className = 'kb-slot-meta';
@@ -701,10 +904,18 @@ export class HudOverlay {
 
         if (slot.stolenByPylonId !== null) {
           box.classList.add('is-stolen');
+          box.setAttribute('data-stolen-pylon', String(slot.stolenByPylonId));
+          box.title = `${def?.displayName ?? slot.weaponId} — LOCKED ON PYLON #${slot.stolenByPylonId}! Cleanse Pylon to reclaim.`;
+
           const tag = document.createElement('div');
           tag.className = 'kb-slot-stolen-tag';
-          tag.textContent = `STOLEN\nP#${slot.stolenByPylonId}`;
+          const lockIcon = this.createPixelLockIcon();
+          const lockLabel = document.createElement('span');
+          lockLabel.textContent = `P#${slot.stolenByPylonId}`;
+          tag.append(lockIcon, lockLabel);
           box.appendChild(tag);
+        } else {
+          box.title = `${def?.displayName ?? slot.weaponId} (Lv ${slot.level})`;
         }
 
         this.weaponTray.appendChild(box);
@@ -805,7 +1016,7 @@ export class HudOverlay {
   }
 
   private updateBossBar(state: Readonly<SimState>, catalog: Readonly<GameCatalog>): void {
-    if (!this.bossBox || !this.bossName || !this.bossHpText || !this.bossFill || !this.bossPylons) {
+    if (!this.bossBox || !this.bossName || !this.bossHpText || !this.bossFill) {
       return;
     }
 
@@ -822,17 +1033,79 @@ export class HudOverlay {
     this.bossHpText.textContent = `${formatCompact(Math.ceil(boss.hp))} / ${formatCompact(Math.ceil(boss.maxHp))}`;
     const pct = boss.maxHp > 0 ? Math.max(0, Math.min(100, (boss.hp / boss.maxHp) * 100)) : 0;
     this.bossFill.style.width = `${pct.toFixed(1)}%`;
+  }
 
-    if (state.pylons.length > 0) {
-      const cleansed = state.pylons.filter((p) => p.cleansed).length;
-      const stolenCount = state.player.weapons.filter((w) => w.stolenByPylonId !== null).length;
-      this.bossPylons.classList.add('is-active');
-      this.bossPylons.textContent =
-        stolenCount > 0
-          ? `PYLONS CLEANSED: ${cleansed} / ${state.pylons.length}  |  STOLEN WEAPONS: ${stolenCount}`
-          : `BOSS PYLONS CLEANSED: ${cleansed} / ${state.pylons.length}`;
+  private updatePylonHud(state: Readonly<SimState>): void {
+    if (!this.pylonBar || !this.pylonLabel || !this.pylonPips || !this.pylonStolenBadge) {
+      return;
+    }
+
+    if (state.pylons.length === 0) {
+      this.pylonBar.classList.remove('is-active');
+      this.lastPylonSig = '';
+      return;
+    }
+
+    this.pylonBar.classList.add('is-active');
+    const stolenCount = state.player.weapons.filter((w) => w.stolenByPylonId !== null).length;
+    const sig = `${stolenCount}|${state.pylons
+      .map((p) => `${p.cleansed ? 2 : p.active ? 1 : 0}:${p.stolenWeaponId ? 1 : 0}`)
+      .join(',')}`;
+
+    if (sig === this.lastPylonSig) return;
+    this.lastPylonSig = sig;
+
+    const cleansed = state.pylons.filter((p) => p.cleansed).length;
+    this.pylonLabel.textContent = `PYLONS ${cleansed}/${state.pylons.length}`;
+
+    this.pylonPips.replaceChildren();
+    for (let i = 0; i < state.pylons.length; i++) {
+      const p = state.pylons[i]!;
+      const pip = document.createElement('span');
+      pip.className = 'kb-pylon-pip';
+      if (p.cleansed) {
+        pip.classList.add('is-cleansed');
+      } else if (p.stolenWeaponId !== null) {
+        pip.classList.add('is-stolen');
+      } else if (p.active) {
+        pip.classList.add('is-active');
+      }
+      this.pylonPips.appendChild(pip);
+    }
+
+    if (stolenCount > 0) {
+      this.pylonStolenBadge.classList.add('is-active');
+      this.pylonStolenBadge.textContent = `LOCKED: ${stolenCount}`;
     } else {
-      this.bossPylons.classList.remove('is-active');
+      this.pylonStolenBadge.classList.remove('is-active');
+      this.pylonStolenBadge.textContent = '';
+    }
+  }
+
+  private updateDarknessHud(state: Readonly<SimState>): void {
+    if (!this.darknessBox || !this.darknessCount || !this.darknessPips) return;
+
+    if (!state.darknessActive) {
+      this.darknessBox.classList.remove('is-active');
+      this.lastDarknessSig = '';
+      return;
+    }
+
+    this.darknessBox.classList.add('is-active');
+    const lamps = state.darknessLamps;
+    const sig = lamps.map((l) => (l.lit ? '1' : '0')).join('');
+    if (sig === this.lastDarknessSig) return;
+    this.lastDarknessSig = sig;
+
+    const litCount = lamps.filter((l) => l.lit).length;
+    const total = lamps.length;
+    this.darknessCount.textContent = total > 0 ? `${litCount}/${total} LAMPS` : 'FIND LAMPS';
+
+    this.darknessPips.replaceChildren();
+    for (let i = 0; i < total; i++) {
+      const pip = document.createElement('span');
+      pip.className = lamps[i]!.lit ? 'kb-lamp-pip is-lit' : 'kb-lamp-pip';
+      this.darknessPips.appendChild(pip);
     }
   }
 
@@ -900,7 +1173,7 @@ export class HudOverlay {
       }
     }
 
-    // Also check Boss Portal if open
+    // Check Boss Portal if open
     if (state.bossPortalOpen && state.bossPortalPos) {
       const dx = state.bossPortalPos.x - px;
       const dz = state.bossPortalPos.z - pz;
@@ -913,7 +1186,7 @@ export class HudOverlay {
       }
     }
 
-    // Also check active uncleansed Boss Pylons
+    // Check active uncleansed Boss Pylons
     for (const pylon of state.pylons) {
       if (!pylon.active || pylon.cleansed) continue;
       const dx = pylon.pos.x - px;
@@ -922,12 +1195,34 @@ export class HudOverlay {
       const reach = Math.max(4.0, pylon.radius + 1.5);
       if (distSq <= reach * reach && distSq < bestDistSq) {
         bestDistSq = distSq;
-        bestLabel = pylon.stolenWeaponId
-          ? `CLEANSE PYLON #${pylon.index + 1}`
-          : `CHARGE PYLON #${pylon.index + 1}`;
+        if (pylon.stolenWeaponId) {
+          const wDef = catalog.weapons.find((w) => w.id === pylon.stolenWeaponId);
+          bestLabel = `RECLAIM ${shortTag(pylon.stolenWeaponId, wDef?.displayName, 4)} (P#${pylon.index + 1})`;
+        } else {
+          bestLabel = `CHARGE PYLON #${pylon.index + 1}`;
+        }
         bestCost = 0;
         bestChargeRatio =
-          pylon.chargeDurationSec > 0 ? Math.min(1, pylon.chargeProgress / pylon.chargeDurationSec) : null;
+          pylon.chargeDurationSec > 0
+            ? Math.min(1, pylon.chargeProgress / pylon.chargeDurationSec)
+            : null;
+      }
+    }
+
+    // Check unlit Big Bob Darkness Lamps when darkness is active
+    if (state.darknessActive && state.darknessLamps.length > 0) {
+      for (const lamp of state.darknessLamps) {
+        if (lamp.lit) continue;
+        const dx = lamp.pos.x - px;
+        const dz = lamp.pos.z - pz;
+        const distSq = dx * dx + dz * dz;
+        const reach = Math.max(4.0, lamp.radius + 1.5);
+        if (distSq <= reach * reach && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          bestLabel = `LIGHT DARKNESS LAMP #${lamp.id}`;
+          bestCost = 0;
+          bestChargeRatio = Math.max(0, Math.min(1, lamp.chargeProgress));
+        }
       }
     }
 
