@@ -402,20 +402,33 @@ export type EnemyRole =
 
 /** Exact 12 interactable / encounter kinds */
 export const INTERACTABLE_KINDS = [
-  'Chest',
-  'FreeChest',
   'ChargeShrine',
-  'ChallengeShrine',
-  'GreedShrine',
-  'MagnetShrine',
-  'HealingShrine',
-  'MoaiStatue',
-  'ShadyMerchant',
+  'Chest',
+  'ShrineMoai',
+  'ShadyGuy',
   'Microwave',
-  'BossPortal',
-  'CryptAltar',
+  'ShrineGreed',
+  'ShrineChallenge',
+  'ShrineCursed',
+  'ShrineMagnet',
+  'ShrineBalance',
+  'Pot',
+  'BossSpawner',
 ] as const;
 export type InteractableKind = (typeof INTERACTABLE_KINDS)[number];
+
+export type InteractableVariant =
+  | 'normal'
+  | 'free'
+  | 'evil'
+  | 'ghost'
+  | 'golden'
+  | 'pumpkin'
+  | 'tumbleweed'
+  | 'portal'
+  | 'crypt_altar';
+
+export type WorldStructureKind = 'BossPortal' | 'CryptAltar';
 
 export type PickupKind =
   | 'xp_small'
@@ -427,19 +440,25 @@ export type PickupKind =
   | 'magnet'
   | 'nuke'
   | 'freeze_clock'
+  | 'rage'
+  | 'haste'
+  | 'stonks'
+  | 'shield'
   | 'crypt_key'
   | 'boss_key';
 
+export type EPickupType = PickupKind;
+
 /** Exact 8 meta shop upgrades */
 export const SHOP_UPGRADE_IDS = [
-  'MaxHealth',
-  'Damage',
-  'MoveSpeed',
-  'Luck',
-  'XpGain',
-  'SilverGain',
-  'Revival',
-  'DraftControl',
+  'Weapons',
+  'Tomes',
+  'Refresh',
+  'Skip',
+  'Banish',
+  'SilverMultiplier',
+  'Boombox',
+  'Toggler',
 ] as const;
 export type ShopUpgradeId = (typeof SHOP_UPGRADE_IDS)[number];
 
@@ -462,6 +481,15 @@ export type GamePhase =
 
 export type CameraMode = 'third' | 'first';
 export type FpsCap = 30 | 60 | 120 | 0;
+export type GrassQuality = 'low' | 'med' | 'high';
+export type PlayerMovementState =
+  | 'Idle'
+  | 'Walking'
+  | 'Crouching'
+  | 'Sliding'
+  | 'Airborne'
+  | 'Wallrunning'
+  | 'Grinding';
 export type InputDeviceKind = 'keyboard_mouse' | 'gamepad' | 'touch';
 export type GamepadProfile =
   | 'xbox'
@@ -751,7 +779,15 @@ export interface MetaShopUpgradeDef {
   baseSilverCost: number;
   costGrowthMult: number;
   statModifierPerRank?: StatModifier;
-  specialEffect?: 'revival' | 'draft_control';
+  specialEffect?:
+    | 'weapon_slot'
+    | 'tome_slot'
+    | 'refresh'
+    | 'skip'
+    | 'banish'
+    | 'silver_multiplier'
+    | 'boombox'
+    | 'toggler';
 }
 
 export interface ChallengeDef {
@@ -842,6 +878,8 @@ export interface InputFrame {
   jumpPressed: boolean;
   /** Crouch / slide held */
   crouchSlide: boolean;
+  /** Manual aim/fire held (used by WeaponSniper/WeaponShotgun & touch AIM/FIRE) */
+  fireHeld: boolean;
   /** Interact button edge-triggered */
   interactPressed: boolean;
   /** Camera 1st/3rd toggle edge-triggered */
@@ -867,6 +905,7 @@ export function createEmptyInputFrame(lookYaw = 0, lookPitch = 0): InputFrame {
     jump: false,
     jumpPressed: false,
     crouchSlide: false,
+    fireHeld: false,
     interactPressed: false,
     cameraTogglePressed: false,
     pausePressed: false,
@@ -929,6 +968,9 @@ export interface PlayerState {
   pitch: number;
   capsuleRadius: number;
   capsuleHeight: number;
+  movementState: PlayerMovementState;
+  /** Character-specific passive meter (Calcium speed, TonyMcZoom ZapBar, Megachad Flex CD, etc.) */
+  passiveMeter?: number;
   grounded: boolean;
   groundNormal: Vec3;
   coyoteTimer: number;
@@ -1050,6 +1092,7 @@ export interface PickupState {
 export interface InteractableState {
   id: number;
   kind: InteractableKind;
+  variant?: InteractableVariant;
   pos: Vec3;
   radius: number;
   used: boolean;
@@ -1058,6 +1101,15 @@ export interface InteractableState {
   chargeDurationSec: number;
   costGold: number;
   offerPayloadIds?: string[];
+}
+
+/** Graveyard Big Bob Darkness phase lamp state */
+export interface DarknessLampState {
+  id: number;
+  pos: Vec3;
+  radius: number;
+  lit: boolean;
+  chargeProgress: number;
 }
 
 /** FinalBossMap 11-Pylon & weapon-stealing state */
@@ -1192,11 +1244,18 @@ export interface SimState {
   pendingOffer: DraftOffer | null;
   stageBossId: number | null;
   stageBossDefeated: boolean;
+  bossPortalOpen: boolean;
+  bossPortalPos: Vec3 | null;
   cryptUnlocked: boolean;
   bigBobId: number | null;
+  darknessActive: boolean;
+  darknessLamps: DarknessLampState[];
   finalBossId: number | null;
   finalSwarmActive: boolean;
   spookySteveId: number | null;
+  activeBannerText: string | null;
+  stageEventsFired: string[];
+  invincible?: boolean;
   rerollsLeft: number;
   banishesLeft: number;
   skipsLeft: number;
@@ -1249,7 +1308,7 @@ export type SimEvent =
   | { type: 'boss_defeated'; tick: number; entityId: number; enemyId: string; pos: Vec3 }
   | { type: 'final_swarm_start'; tick: number; spookySteveId: number; pos: Vec3 }
   | { type: 'pickup_collected'; tick: number; kind: PickupKind; value: number; pos: Vec3 }
-  | { type: 'interactable_used'; tick: number; interactableId: number; kind: InteractableKind; pos: Vec3 }
+  | { type: 'interactable_used'; tick: number; interactableId: number; kind: InteractableKind; variant?: InteractableVariant; pos: Vec3 }
   | { type: 'pylon_charged'; tick: number; pylonId: number; index: number; cleansedCount: number; totalPylons: number; pos: Vec3 }
   | { type: 'item_proc'; tick: number; itemId: string; trigger: ItemTrigger; pos: Vec3 }
   | { type: 'portal_activated'; tick: number; targetMapId: MapId; targetTier: MapTier }
@@ -1277,6 +1336,9 @@ export interface RenderSettings {
   fpsCap: FpsCap;
   /** When true, locks render interpolation alpha to 1.0 (discrete 50 Hz visual cadence) */
   classic50HzSnap: boolean;
+  grassQuality: GrassQuality;
+  boomboxTrack: string;
+  unlockAll: boolean;
   pixelScale: number;
   outlineEnabled: boolean;
   outlineThickness: number;
@@ -1299,8 +1361,11 @@ export const DEFAULT_RENDER_SETTINGS: Readonly<RenderSettings> = Object.freeze({
   fov: FOV_DEFAULT,
   cameraMode: 'third',
   cameraDistance: CAMERA_3RD_OFFSET_Z,
-  fpsCap: 60,
+  fpsCap: 120,
   classic50HzSnap: false,
+  grassQuality: 'high',
+  boomboxTrack: 'auto',
+  unlockAll: false,
   pixelScale: 1.0,
   outlineEnabled: true,
   outlineThickness: 1.0,
@@ -1378,14 +1443,28 @@ export function createDefaultSaveData(): SaveData {
     totalKills: 0,
     totalPlayTimeSec: 0,
     unlockedCharacters: ['Fox', 'Calcium', 'SirOofie', 'Megachad'],
-    unlockedWeapons: ['Firestaff', 'Bone', 'Sword', 'Aura', 'Bow', 'Revolver'],
+    unlockedWeapons: [
+      'WeaponFireStaff',
+      'WeaponBone',
+      'WeaponSword',
+      'WeaponAura',
+      'WeaponBow',
+      'WeaponRevolver',
+      'WeaponChunkers',
+      'WeaponLightningBolt',
+      'WeaponSniper',
+    ],
     unlockedTomes: [
-      'DamageTome',
-      'AttackSpeedTome',
-      'MaxHealthTome',
-      'MoveSpeedTome',
-      'CritChanceTome',
-      'XpTome',
+      'TomeDamage',
+      'TomeCooldown',
+      'TomeHealth',
+      'TomeAgility',
+      'TomePrecision',
+      'TomeXP',
+      'TomeQuantity',
+      'TomeSize',
+      'TomeArmor',
+      'TomeLuck',
     ],
     unlockedItems: [],
     unlockedMaps: ['Forest'],
@@ -1395,14 +1474,14 @@ export function createDefaultSaveData(): SaveData {
     questProgress: {},
     claimedQuests: [],
     shopLevels: {
-      MaxHealth: 0,
-      Damage: 0,
-      MoveSpeed: 0,
-      Luck: 0,
-      XpGain: 0,
-      SilverGain: 0,
-      Revival: 0,
-      DraftControl: 0,
+      Weapons: 0,
+      Tomes: 0,
+      Refresh: 0,
+      Skip: 0,
+      Banish: 0,
+      SilverMultiplier: 0,
+      Boombox: 0,
+      Toggler: 0,
     },
     selectedCharacter: 'Fox',
     selectedSkin: null,
@@ -1507,6 +1586,9 @@ export interface DebugBridge {
   triggerFinalSwarm(): void;
   cleansePylon(pylonIndex: number): void;
   applyDraftChoice(choiceIndex: number): void;
+  simulateTouch(active: boolean): void;
+  setInvincible(enabled: boolean): void;
+  warpStage(mapId: MapId, tier: MapTier): void;
 }
 
 // ============================================================================
