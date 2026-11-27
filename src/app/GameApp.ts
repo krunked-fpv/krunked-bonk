@@ -18,7 +18,6 @@ import {
   MAX_SUBSTEPS_PER_FRAME,
   createEmptyInputFrame,
   type CharacterId,
-  type CustomPackFileEntry,
   type DebugBridge,
   type DebugPerfMetrics,
   type EnemyRole,
@@ -35,6 +34,12 @@ import {
   type Vec3,
 } from '../contracts/index';
 import { CustomAssetPack } from '../assets/AssetRegistry';
+import {
+  applyCustomPackLoadResult,
+  loadCustomPackFromDevOrDb,
+  pickCustomPackDirectory,
+  saveCustomPackToDb,
+} from '../assets/CustomPackLoader';
 import { createAudioEngine, type AudioEngine } from '../audio/AudioEngine';
 import { getShopUpgradeById } from '../data/index';
 import { InputManager } from '../input/InputManager';
@@ -72,7 +77,6 @@ export class GameApp {
   private readonly customPack: CustomAssetPack;
 
   private container: HTMLElement | null = null;
-  private folderPickerInput: HTMLInputElement | null = null;
   private rafId: number | null = null;
   private running = false;
   private disposed = false;
@@ -111,6 +115,11 @@ export class GameApp {
         this.audio.playSfx('ui_move');
         this.enterMenuPhase('character_select');
       },
+      onOpenQuests: () => {
+        this.audio.unlock();
+        this.audio.playSfx('ui_move');
+        this.enterMenuPhase('quests');
+      },
       onOpenShop: () => {
         this.audio.unlock();
         this.audio.playSfx('ui_move');
@@ -136,6 +145,16 @@ export class GameApp {
       onSelectCharacter: (characterId: CharacterId) => {
         this.audio.playSfx('ui_move');
         this.saveManager.setSelection({ selectedCharacter: characterId });
+        this.refreshPreviewBackdrop();
+      },
+      onSelectSkin: (skinId: string | null) => {
+        this.audio.playSfx('ui_move');
+        this.saveManager.setSelection({ selectedSkin: skinId });
+        this.refreshPreviewBackdrop();
+      },
+      onSelectHat: (hatId: string | null) => {
+        this.audio.playSfx('ui_move');
+        this.saveManager.setSelection({ selectedHat: hatId });
         this.refreshPreviewBackdrop();
       },
       onSelectMap: (mapId: MapId) => {
@@ -206,6 +225,27 @@ export class GameApp {
           this.audio.playSfx('ui_cancel');
         }
       },
+      onRefundShopUpgrade: (upgradeId: ShopUpgradeId) => {
+        const def = getShopUpgradeById(upgradeId);
+        if (!def) return;
+        const result = this.saveManager.refundShopUpgrade(def);
+        this.audio.playSfx(result.ok ? 'gold' : 'ui_cancel');
+      },
+      onRefundAllShopUpgrades: () => {
+        const result = this.saveManager.refundAllShopUpgrades(this.sim.getCatalog().shopUpgrades);
+        this.audio.playSfx(result.refundedSilver > 0 ? 'gold' : 'ui_cancel');
+      },
+      onClaimQuest: (questId: string) => {
+        const quest = this.sim.getCatalog().quests.find((q) => q.id === questId);
+        if (!quest) return;
+        const result = this.saveManager.claimQuest(quest);
+        this.audio.playSfx(result.ok ? 'gold' : 'ui_cancel');
+      },
+      onSelectBoomboxTrack: (trackId: string) => {
+        this.audio.unlock();
+        this.applySettingsPatch({ boomboxTrack: trackId });
+        this.audio.playSfx('ui_move');
+      },
       onUpdateSettings: (patch: Partial<RenderSettings>) => {
         this.applySettingsPatch(patch);
       },
@@ -215,7 +255,7 @@ export class GameApp {
         return ok;
       },
       onLoadCustomPack: () => {
-        this.openCustomPackFolderPicker();
+        void this.openCustomPackFolderPicker();
       },
       onToggleCustomPack: (enabled: boolean) => {
         this.audio.playSfx('ui_move');
@@ -248,8 +288,8 @@ export class GameApp {
     // 2. Build live 3D orbiting Forest title backdrop immediately from frame 1
     this.setupBackdropScene('title');
 
-    // 3. Silently probe dev-only `/__custom_pack__/manifest.json` (never errors in prod)
-    void this.probeDevCustomPack();
+    // 3. Auto-restore persisted IndexedDB custom pack or probe dev-only `/__custom_pack__/manifest.json`
+    void this.restorePersistedOrDevCustomPack();
 
     // 4. Bind window resize & click-to-pointerlock during active KBM gameplay
     window.addEventListener('resize', this.handleWindowResize);
@@ -272,10 +312,6 @@ export class GameApp {
     }
     window.removeEventListener('resize', this.handleWindowResize);
     this.container?.removeEventListener('pointerdown', this.handleContainerPointerDown);
-    if (this.folderPickerInput) {
-      this.folderPickerInput.remove();
-      this.folderPickerInput = null;
-    }
     this.input.detach();
     this.ui.dispose();
     this.audio.dispose();
@@ -498,6 +534,7 @@ export class GameApp {
       gamepadConnected: this.input.isGamepadConnected(),
       customPackLoaded: this.customPack.isLoaded(),
       customPackName: this.customPackName,
+      boomboxTracks: this.audio.getAvailableBoomboxTracks(),
       perf: this.getPerfMetrics(),
       fireHeld: this.lastFireHeld,
       maxWeaponSlots: getMaxWeaponSlots(save.shopLevels, challenge),
@@ -706,20 +743,20 @@ export class GameApp {
       case 'shop':
       case 'quests':
       case 'settings':
-        this.audio.setMusicState('title');
+        this.audio.setMusicContext(st.mapId, st.mapTier, 'title');
         break;
       case 'victory':
-        this.audio.setMusicState('victory');
+        this.audio.setMusicContext(st.mapId, st.mapTier, 'victory');
         break;
       case 'game_over':
-        this.audio.setMusicState('game_over');
+        this.audio.setMusicContext(st.mapId, st.mapTier, 'game_over');
         break;
       default: {
         if (st.finalSwarmActive) {
-          this.audio.setMusicState('final_swarm');
+          this.audio.setMusicContext(st.mapId, st.mapTier, 'final_swarm');
         } else {
           const bossAlive = st.enemies.some((e) => e.isBoss && e.hp > 0);
-          this.audio.setMusicState(bossAlive ? 'boss' : 'explore');
+          this.audio.setMusicContext(st.mapId, st.mapTier, bossAlive ? 'boss' : 'explore');
         }
         break;
       }
@@ -761,14 +798,18 @@ export class GameApp {
   }
 
   // ==========================================================================
-  // CUSTOM ASSET PACK LOADER & LIVE SWITCHING
+  // CUSTOM ASSET PACK LOADER (IndexedDB + Dev Endpoint) & LIVE SWITCHING
   // ==========================================================================
 
-  private async probeDevCustomPack(): Promise<void> {
-    const ok = await this.customPack.loadFromDevEndpoint(CUSTOM_PACK_DEV_PREFIX);
+  private async restorePersistedOrDevCustomPack(): Promise<void> {
+    const loaded = await loadCustomPackFromDevOrDb({ devPrefix: CUSTOM_PACK_DEV_PREFIX });
+    if (this.disposed || loaded.source === 'none') return;
+
+    const ok = await applyCustomPackLoadResult(this.customPack, loaded, CUSTOM_PACK_DEV_PREFIX);
     if (!ok || this.disposed) return;
 
-    this.customPackName = 'Local Dev Pack';
+    this.customPackName =
+      loaded.packName ?? (loaded.source === 'indexeddb' ? 'Saved Custom Pack' : 'Local Dev Pack');
     const enabled = this.saveManager.getData().customPackEnabled;
     const registry = this.renderer.getAssetRegistry();
     registry.setCustomPack(this.customPack);
@@ -783,53 +824,22 @@ export class GameApp {
     this.audio.setAssetPack(enabled && this.customPack.isLoaded() ? this.customPack : null);
   }
 
-  private openCustomPackFolderPicker(): void {
-    if (typeof document === 'undefined') return;
-    if (!this.folderPickerInput) {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.multiple = true;
-      input.setAttribute('webkitdirectory', '');
-      input.setAttribute('directory', '');
-      input.style.display = 'none';
-      input.addEventListener('change', () => {
-        void this.handleCustomPackFilesSelected(input.files);
-        input.value = '';
-      });
-      document.body.appendChild(input);
-      this.folderPickerInput = input;
-    }
-    this.folderPickerInput.click();
-  }
+  private async openCustomPackFolderPicker(): Promise<void> {
+    const picked = await pickCustomPackDirectory({ persistToDb: false });
+    if (this.disposed || picked.cancelled) return;
 
-  private async handleCustomPackFilesSelected(fileList: FileList | null): Promise<void> {
-    if (!fileList || fileList.length === 0) return;
-
-    const entries: CustomPackFileEntry[] = [];
-    let rootFolderName = 'Custom Pack';
-
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      if (!file) continue;
-      const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      if (i === 0 && rel.includes('/')) {
-        rootFolderName = rel.split('/')[0] || rootFolderName;
-      }
-      try {
-        const buf = await file.arrayBuffer();
-        entries.push({
-          relativePath: rel,
-          bytes: new Uint8Array(buf),
-          mimeType: file.type || undefined,
-        });
-      } catch {
-        // Skip unreadable individual files gracefully
-      }
+    if (!picked.manifest || picked.files.length === 0) {
+      this.audio.playSfx('ui_cancel');
+      return;
     }
 
-    const ok = await this.customPack.loadFromFiles(entries);
+    const ok = await this.customPack.loadFromFiles(picked.files);
+    if (this.disposed) return;
+
     if (ok) {
-      this.customPackName = rootFolderName;
+      const packName = picked.packName ?? 'Custom Pack';
+      this.customPackName = packName;
+      await saveCustomPackToDb(picked.files, packName);
       const registry = this.renderer.getAssetRegistry();
       registry.setCustomPack(this.customPack);
       this.setCustomPackEnabled(true);

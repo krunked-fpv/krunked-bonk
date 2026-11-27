@@ -142,18 +142,23 @@ export class DebugDrawer {
       this.camBtn,
       this.snapBtn,
       this.makeBtn('WARP FOREST T1', () => this.warp('Forest', 1)),
-      this.makeBtn('WARP FOREST T2', () => this.warp('Forest', 2)),
-      this.makeBtn('WARP FOREST T3', () => this.warp('Forest', 3)),
+      this.makeBtn('WARP DESERT T1', () => this.warp('Desert', 1)),
+      this.makeBtn('WARP GRAVEYARD', () => this.warp('Graveyard', 1)),
       this.makeBtn('WARP FINAL BOSS', () => this.warp('FinalBossMap', 1)),
       this.makeBtn('CLEANSE PYLON', () => {
         this.bridge.cleansePylon(this.nextPylonIndex % 11);
         this.nextPylonIndex += 1;
         this.refreshStats();
       }),
+      this.makeBtn('SPAWN SHADY/MICRO', () => {
+        this.spawnShadyAndMicrowave();
+        this.refreshStats();
+      }),
       this.makeBtn('STEP +50 TICKS', () => {
         this.bridge.stepTicks(50, { moveZ: 1 });
         this.refreshStats();
       }),
+      this.makeBtn('WARP FOREST T3', () => this.warp('Forest', 3)),
     );
 
     root.append(header, statsPre, grid);
@@ -199,6 +204,50 @@ export class DebugDrawer {
     this.bridge.warpStage(mapId, tier);
     this.nextPylonIndex = 0;
     this.refreshStats();
+  }
+
+  private spawnShadyAndMicrowave(): void {
+    const st = this.bridge.getState();
+    const p = st.player;
+    const fwdX = -Math.sin(p.yaw);
+    const fwdZ = -Math.cos(p.yaw);
+    const rightX = Math.cos(p.yaw);
+    const rightZ = -Math.sin(p.yaw);
+
+    st.interactables.push(
+      {
+        id: st.nextEntityId++,
+        kind: 'ShadyGuy',
+        variant: 'normal',
+        pos: {
+          x: p.pos.x + fwdX * 4.5 - rightX * 2.4,
+          y: p.pos.y,
+          z: p.pos.z + fwdZ * 4.5 - rightZ * 2.4,
+        },
+        radius: 3.8,
+        used: false,
+        active: true,
+        chargeProgress: 0,
+        chargeDurationSec: 0,
+        costGold: 30,
+      },
+      {
+        id: st.nextEntityId++,
+        kind: 'Microwave',
+        variant: 'normal',
+        pos: {
+          x: p.pos.x + fwdX * 4.5 + rightX * 2.4,
+          y: p.pos.y,
+          z: p.pos.z + fwdZ * 4.5 + rightZ * 2.4,
+        },
+        radius: 3.6,
+        used: false,
+        active: true,
+        chargeProgress: 0,
+        chargeDurationSec: 0,
+        costGold: 40,
+      },
+    );
   }
 
   private syncToggleLabels(): void {
