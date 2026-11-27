@@ -11,6 +11,14 @@ import {
   type RenderSettings,
   type SimState,
 } from '../contracts';
+import {
+  createSvgIcon,
+  getItemIconSvg,
+  getTomeIconSvg,
+  getUiIconSvg,
+  getWeaponIconSvg,
+  type UiIconName,
+} from './UiIcons';
 
 export interface HudUpdateContext {
   state: Readonly<SimState>;
@@ -392,12 +400,14 @@ export class HudOverlay {
 
     const timerBox = document.createElement('div');
     timerBox.className = 'kb-hud-timer';
+    const timerIcon = createSvgIcon(getUiIconSvg('clock', 15), 'kb-hud-timer-icon');
     const timerValue = document.createElement('span');
+    timerValue.className = 'kb-hud-timer-val';
     timerValue.textContent = '10:00';
     const timerTag = document.createElement('span');
     timerTag.className = 'kb-hud-timer-tag';
     timerTag.textContent = 'STAGE';
-    timerBox.append(timerTag, timerValue);
+    timerBox.append(timerTag, timerIcon, timerValue);
 
     const bossStack = document.createElement('div');
     bossStack.className = 'kb-hud-boss-stack';
@@ -407,9 +417,14 @@ export class HudOverlay {
     bossBox.setAttribute('data-kb-boss-hud', 'true');
     const bossHeader = document.createElement('div');
     bossHeader.className = 'kb-hud-boss-header';
+    const bossTitleWrap = document.createElement('span');
+    bossTitleWrap.className = 'kb-hud-boss-title';
+    const bossSkull = createSvgIcon(getUiIconSvg('skull', 15), 'kb-boss-icon');
     const bossName = document.createElement('span');
+    bossTitleWrap.append(bossSkull, bossName);
     const bossHpText = document.createElement('span');
-    bossHeader.append(bossName, bossHpText);
+    bossHpText.className = 'kb-hud-boss-hp-text';
+    bossHeader.append(bossTitleWrap, bossHpText);
     const bossBar = document.createElement('div');
     bossBar.className = 'kb-hud-boss-bar';
     const bossFill = document.createElement('div');
@@ -470,9 +485,9 @@ export class HudOverlay {
     const counters = document.createElement('div');
     counters.className = 'kb-hud-counters';
 
-    const killsPill = this.makeCounterPill('KILLS', 'kb-counter-pill--kills');
-    const goldPill = this.makeCounterPill('GOLD', 'kb-counter-pill--gold');
-    const silverPill = this.makeCounterPill('SILVER', 'kb-counter-pill--silver');
+    const killsPill = this.makeCounterPill('KILLS', 'skull', 'kb-counter-pill--kills');
+    const goldPill = this.makeCounterPill('GOLD', 'gold', 'kb-counter-pill--gold');
+    const silverPill = this.makeCounterPill('SILVER', 'silver', 'kb-counter-pill--silver');
     counters.append(killsPill.el, goldPill.el, silverPill.el);
 
     const fpsBox = document.createElement('div');
@@ -486,20 +501,28 @@ export class HudOverlay {
     vitalCard.className = 'kb-vital-card';
 
     const hpTrack = document.createElement('div');
-    hpTrack.className = 'kb-bar-track';
+    hpTrack.className = 'kb-bar-track kb-bar-track--hp';
     const hpFill = document.createElement('div');
     hpFill.className = 'kb-bar-fill kb-bar-fill--hp';
+    const hpLabelRow = document.createElement('span');
+    hpLabelRow.className = 'kb-bar-text';
+    const hpIconWrap = createSvgIcon(getUiIconSvg('heart', 13), 'kb-bar-icon kb-bar-icon--hp');
     const hpText = document.createElement('span');
-    hpText.className = 'kb-bar-text';
-    hpTrack.append(hpFill, hpText);
+    hpText.className = 'kb-bar-val';
+    hpLabelRow.append(hpIconWrap, hpText);
+    hpTrack.append(hpFill, hpLabelRow);
 
     const shieldTrack = document.createElement('div');
     shieldTrack.className = 'kb-bar-track kb-bar-track--thin';
     const shieldFill = document.createElement('div');
     shieldFill.className = 'kb-bar-fill kb-bar-fill--shield';
+    const shieldLabelRow = document.createElement('span');
+    shieldLabelRow.className = 'kb-bar-text';
+    const shieldIconWrap = createSvgIcon(getUiIconSvg('shield', 11), 'kb-bar-icon kb-bar-icon--shield');
     const shieldText = document.createElement('span');
-    shieldText.className = 'kb-bar-text';
-    shieldTrack.append(shieldFill, shieldText);
+    shieldText.className = 'kb-bar-val';
+    shieldLabelRow.append(shieldIconWrap, shieldText);
+    shieldTrack.append(shieldFill, shieldLabelRow);
 
     const passiveRow = document.createElement('div');
     passiveRow.className = 'kb-passive-row';
@@ -536,13 +559,14 @@ export class HudOverlay {
 
     const speedo = document.createElement('div');
     speedo.className = 'kb-speedometer';
+    const speedIcon = createSvgIcon(getUiIconSvg('speed', 16), 'kb-speed-icon');
     const speedVal = document.createElement('span');
     speedVal.className = 'kb-speed-val';
     speedVal.textContent = '0.0';
     const speedUnit = document.createElement('span');
     speedUnit.className = 'kb-speed-unit';
     speedUnit.textContent = 'M/S';
-    speedo.append(speedVal, speedUnit);
+    speedo.append(speedIcon, speedVal, speedUnit);
 
     kinetic.append(pills, speedo);
 
@@ -813,17 +837,20 @@ export class HudOverlay {
 
   private makeCounterPill(
     label: string,
+    icon: UiIconName,
     extraClass: string,
   ): { el: HTMLDivElement; val: HTMLSpanElement } {
     const el = document.createElement('div');
     el.className = `kb-counter-pill ${extraClass}`;
+    el.title = label;
+    const iconEl = createSvgIcon(getUiIconSvg(icon, 14), 'kb-counter-icon');
     const lbl = document.createElement('span');
     lbl.className = 'kb-counter-label';
     lbl.textContent = label;
     const val = document.createElement('span');
     val.className = 'kb-counter-val';
     val.textContent = '0';
-    el.append(lbl, val);
+    el.append(iconEl, lbl, val);
     return { el, val };
   }
 
@@ -874,33 +901,28 @@ export class HudOverlay {
         }
 
         const def = catalog.weapons.find((w) => w.id === slot.weaponId);
+        const elemCol = ELEMENT_COLORS[def?.element ?? 'Physical'] ?? '#f5a623';
+        box.style.setProperty('--kb-slot-color', elemCol);
+
         const accent = document.createElement('div');
         accent.className = 'kb-slot-accent';
-        accent.style.background = ELEMENT_COLORS[def?.element ?? 'Physical'] ?? '#f5a623';
+        accent.style.background = elemCol;
+
+        const iconWrap = createSvgIcon(getWeaponIconSvg(slot.weaponId, elemCol, 24), 'kb-slot-icon');
 
         const name = document.createElement('div');
         name.className = 'kb-slot-name';
         name.textContent = shortTag(slot.weaponId, def?.displayName, 4);
 
-        const meta = document.createElement('div');
-        meta.className = 'kb-slot-meta';
         const lvl = document.createElement('span');
+        lvl.className = 'kb-slot-lvl';
         lvl.textContent = `L${slot.level}`;
-        const pips = document.createElement('div');
-        pips.className = 'kb-slot-pips';
-        const pipCount = Math.min(5, slot.level);
-        for (let p = 0; p < pipCount; p++) {
-          const pip = document.createElement('span');
-          pip.className = 'kb-slot-pip';
-          pips.appendChild(pip);
-        }
-        meta.append(lvl, pips);
 
         const cdVeil = document.createElement('div');
         cdVeil.className = 'kb-slot-cd-veil';
         cdVeil.setAttribute('data-slot-cd', String(i));
 
-        box.append(accent, name, meta, cdVeil);
+        box.append(accent, iconWrap, name, lvl, cdVeil);
 
         if (slot.stolenByPylonId !== null) {
           box.classList.add('is-stolen');
@@ -960,30 +982,25 @@ export class HudOverlay {
       }
 
       const def = catalog.tomes.find((t) => t.id === slot.tomeId);
+      const tomeCol = def?.colorHex ?? '#38bdf8';
+      box.style.setProperty('--kb-slot-color', tomeCol);
+
       const accent = document.createElement('div');
       accent.className = 'kb-slot-accent';
-      accent.style.background = def?.colorHex ?? '#38bdf8';
+      accent.style.background = tomeCol;
+
+      const iconWrap = createSvgIcon(getTomeIconSvg(slot.tomeId, tomeCol, 24), 'kb-slot-icon');
 
       const name = document.createElement('div');
       name.className = 'kb-slot-name';
       name.textContent = shortTag(slot.tomeId, def?.displayName, 4);
       box.title = `${def?.displayName ?? slot.tomeId} (Lv ${slot.level})`;
 
-      const meta = document.createElement('div');
-      meta.className = 'kb-slot-meta';
       const lvl = document.createElement('span');
+      lvl.className = 'kb-slot-lvl';
       lvl.textContent = `L${slot.level}`;
-      const pips = document.createElement('div');
-      pips.className = 'kb-slot-pips';
-      const pipCount = Math.min(5, slot.level);
-      for (let p = 0; p < pipCount; p++) {
-        const pip = document.createElement('span');
-        pip.className = 'kb-slot-pip';
-        pips.appendChild(pip);
-      }
-      meta.append(lvl, pips);
 
-      box.append(accent, name, meta);
+      box.append(accent, iconWrap, name, lvl);
       this.tomeTray.appendChild(box);
     }
   }
@@ -997,10 +1014,11 @@ export class HudOverlay {
 
     for (const stack of state.player.items) {
       const def = catalog.items.find((i) => i.id === stack.itemId);
+      const rarity = def?.rarity ?? 'Common';
       const chip = document.createElement('div');
       chip.className = 'kb-item-chip';
-      chip.setAttribute('data-rarity', def?.rarity ?? 'Common');
-      chip.textContent = shortTag(stack.itemId, def?.displayName, 4);
+      chip.setAttribute('data-rarity', rarity);
+      chip.appendChild(createSvgIcon(getItemIconSvg(stack.itemId, rarity, 20), 'kb-item-icon'));
       chip.title = def
         ? `${def.displayName} (${def.rarity}) x${stack.stacks}\n${def.description}`
         : `${stack.itemId} x${stack.stacks}`;

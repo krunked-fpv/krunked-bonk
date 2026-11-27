@@ -56,6 +56,7 @@ export interface StageLightingPreset {
   skyTop: number;
   skyMid: number;
   skyHorizon: number;
+  nightAmount: number;
   sunDir: [number, number, number];
   sunR: number;
   sunG: number;
@@ -69,6 +70,9 @@ export interface StageLightingPreset {
   highlightR: number;
   highlightG: number;
   highlightB: number;
+  inkR: number;
+  inkG: number;
+  inkB: number;
 }
 
 export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLightingPreset {
@@ -80,9 +84,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
         fogG: 0.6211,
         fogB: 0.9434,
         fogDensity: 0.006,
-        skyTop: 0x182b66,
+        skyTop: 0x16265e,
         skyMid: 0x3b69bf,
         skyHorizon: 0x6c9ef0,
+        nightAmount: 0.55,
         sunDir: [-0.45, 0.72, 0.52],
         sunR: 0.3647,
         sunG: 0.6353,
@@ -96,6 +101,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
         highlightR: 0.68,
         highlightG: 0.85,
         highlightB: 1.0,
+        inkR: 0.05,
+        inkG: 0.08,
+        inkB: 0.18,
       };
     }
     if (tier === 3) {
@@ -105,9 +113,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
         fogG: 0.1882,
         fogB: 0.1882,
         fogDensity: 0.006,
-        skyTop: 0x2b0a0d,
+        skyTop: 0x24080c,
         skyMid: 0x732222,
         skyHorizon: 0x933030,
+        nightAmount: 0.35,
         sunDir: [0.62, 0.64, 0.45],
         sunR: 0.8784,
         sunG: 0.7412,
@@ -121,6 +130,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
         highlightR: 1.0,
         highlightG: 0.82,
         highlightB: 0.72,
+        inkR: 0.13,
+        inkG: 0.04,
+        inkB: 0.06,
       };
     }
     // EXACT StageDesert1 (Crusty Desert) from oracle.json
@@ -129,9 +141,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       fogG: 0.8157,
       fogB: 0.5922,
       fogDensity: 0.006,
-      skyTop: 0x2278cc,
+      skyTop: 0x1d6fc4,
       skyMid: 0x7bc2e8,
       skyHorizon: 0xecd097,
+      nightAmount: 0.0,
       sunDir: [0.55, 0.78, 0.28],
       sunR: 1.0,
       sunG: 0.9569,
@@ -145,6 +158,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       highlightR: 1.0,
       highlightG: 0.96,
       highlightB: 0.84,
+      inkR: 0.14,
+      inkG: 0.08,
+      inkB: 0.06,
     };
   }
 
@@ -155,9 +171,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       fogG: 0.4157,
       fogB: 0.6235,
       fogDensity: 0.0075,
-      skyTop: 0x1b1533,
-      skyMid: 0x4d3d6e,
+      skyTop: 0x16102d,
+      skyMid: 0x453566,
       skyHorizon: 0x7e6a9f,
+      nightAmount: 0.95,
       sunDir: [-0.35, 0.85, 0.4],
       sunR: 0.9451,
       sunG: 0.8431,
@@ -171,6 +188,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       highlightR: 0.95,
       highlightG: 0.88,
       highlightB: 1.0,
+      inkR: 0.07,
+      inkG: 0.05,
+      inkB: 0.14,
     };
   }
 
@@ -181,9 +201,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       fogG: 0.11,
       fogB: 0.18,
       fogDensity: 0.005,
-      skyTop: 0x0d0817,
+      skyTop: 0x0b0614,
       skyMid: 0x3b1433,
       skyHorizon: 0x7a3826,
+      nightAmount: 0.85,
       sunDir: [0.25, 0.88, -0.35],
       sunR: 1.0,
       sunG: 0.91,
@@ -197,6 +218,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       highlightR: 1.0,
       highlightG: 0.92,
       highlightB: 0.68,
+      inkR: 0.08,
+      inkG: 0.04,
+      inkB: 0.12,
     };
   }
 
@@ -207,9 +231,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       fogG: 0.2824,
       fogB: 0.6235,
       fogDensity: 0.007,
-      skyTop: 0x1d1642,
-      skyMid: 0x4b3680,
+      skyTop: 0x161038,
+      skyMid: 0x453178,
       skyHorizon: 0x62489f,
+      nightAmount: 0.8,
       sunDir: [-0.52, 0.7, 0.48],
       sunR: 1.0,
       sunG: 0.9569,
@@ -223,6 +248,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       highlightR: 1.0,
       highlightG: 0.92,
       highlightB: 0.88,
+      inkR: 0.07,
+      inkG: 0.06,
+      inkB: 0.16,
     };
   }
 
@@ -233,9 +261,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       fogG: 0.0784,
       fogB: 0.0784,
       fogDensity: 0.007,
-      skyTop: 0x1c070a,
+      skyTop: 0x170508,
       skyMid: 0x451214,
       skyHorizon: 0x4d1414,
+      nightAmount: 0.65,
       sunDir: [0.42, 0.72, -0.52],
       sunR: 1.0,
       sunG: 0.9569,
@@ -249,6 +278,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
       highlightR: 1.0,
       highlightG: 0.84,
       highlightB: 0.74,
+      inkR: 0.12,
+      inkG: 0.03,
+      inkB: 0.06,
     };
   }
 
@@ -258,9 +290,10 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
     fogG: 0.4824,
     fogB: 0.6157,
     fogDensity: 0.007,
-    skyTop: 0x147ae0,
-    skyMid: 0x24afd9,
-    skyHorizon: 0x007b9d,
+    skyTop: 0x1a82e2,
+    skyMid: 0x4cc4f4,
+    skyHorizon: 0x7cd8eb,
+    nightAmount: 0.0,
     sunDir: [0.46, 0.82, 0.34],
     sunR: 1.0,
     sunG: 0.9569,
@@ -274,6 +307,9 @@ export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLighti
     highlightR: 1.0,
     highlightG: 0.9569,
     highlightB: 0.8392,
+    inkR: 0.05,
+    inkG: 0.09,
+    inkB: 0.14,
   };
 }
 
@@ -515,6 +551,7 @@ export class ThreeRenderer implements IRenderer {
     this.darknessBlend = 0;
     this.applyStageLighting(mapId, mapTier);
     this.terrainBuilder.buildMap(mapId, mapTier, seed, terrain, this.settings.grassQuality);
+    this.entityInstancer.setTerrain(terrain);
     this.minimap.bakeTerrain(mapId, terrain);
     this.vfxPool.clear();
     this.floatingText.clear();
@@ -652,7 +689,7 @@ export class ThreeRenderer implements IRenderer {
       this.renderer.render(this.scene, this.camera);
     }
 
-    this.floatingText.render(this.camera, dtSec);
+    this.floatingText.render(this.camera, dtSec, currState);
     this.minimap.render(currState);
   }
 
@@ -696,6 +733,9 @@ export class ThreeRenderer implements IRenderer {
     if (this.skyDomeMat.uniforms.uDarkness) {
       this.skyDomeMat.uniforms.uDarkness.value = 0;
     }
+    if (this.skyDomeMat.uniforms.uNightAmount) {
+      this.skyDomeMat.uniforms.uNightAmount.value = p.nightAmount;
+    }
 
     setGlobalToonLighting({
       sunDirX: p.sunDir[0],
@@ -716,6 +756,9 @@ export class ThreeRenderer implements IRenderer {
       skyR: p.fogR * 0.4 + 0.25,
       skyG: p.fogG * 0.6 + 0.35,
       skyB: p.fogB * 0.6 + 0.38,
+      inkR: p.inkR,
+      inkG: p.inkG,
+      inkB: p.inkB,
     });
   }
 
@@ -744,10 +787,46 @@ export class ThreeRenderer implements IRenderer {
       currState.phase === 'character_select' ||
       currState.phase === 'map_select'
     ) {
-      const orbitA = this.elapsedTimeSec * 0.22;
-      const dist = 10.5;
-      this._targetPos.set(px, py + 2.0, pz);
-      this._camPos.set(px + Math.sin(orbitA) * dist, py + 4.4, pz + Math.cos(orbitA) * dist);
+      // Hero Showcase Lens (54° cinematic telephoto) framing the hero cleanly clear of UI!
+      const showcaseFov = 54;
+      if (Math.abs(this.camera.fov - showcaseFov) > 0.05) {
+        this.camera.fov = showcaseFov;
+        this.camera.updateProjectionMatrix();
+      }
+      const isPortrait = this.lastViewportH > this.lastViewportW;
+      // Frame the hero from a lively 3/4 FRONT angle so face, eyes & weapon shine toward the player!
+      const orbitA = yaw + Math.PI + 0.38 + Math.sin(this.elapsedTimeSec * 0.24) * 0.16;
+      const dist = isPortrait ? 6.4 : 5.4;
+      const camX = px + Math.sin(orbitA) * dist;
+      const camZ = pz + Math.cos(orbitA) * dist;
+      const camFloor = this.currentTerrain
+        ? this.currentTerrain.sample(camX, camZ).height + 1.35
+        : py + 1.8;
+      const camY = Math.max(camFloor, py + (isPortrait ? 2.15 : 2.05));
+
+      this._camPos.set(camX, camY, camZ);
+
+      // Compute camera right vector so hero shifts cleanly to the unobstructed side
+      this._camOffset.set(px - camX, 0, pz - camZ).normalize();
+      this._right.crossVectors(this._camOffset, this._up).normalize();
+
+      if (currState.phase === 'title') {
+        if (isPortrait) {
+          // Shift look target downward so the hero sits cleanly in the upper half above the mobile dock
+          this._targetPos.set(px, py + 0.35, pz);
+        } else {
+          // Shift look target left so the hero stands proudly in the right-center foreground
+          const shiftLeft = -1.45;
+          this._targetPos.set(
+            px + this._right.x * shiftLeft,
+            py + 1.45,
+            pz + this._right.z * shiftLeft,
+          );
+        }
+      } else {
+        this._targetPos.set(px, py + 1.45, pz);
+      }
+
       this.camera.position.copy(this._camPos);
       this.camera.lookAt(this._targetPos);
       return;

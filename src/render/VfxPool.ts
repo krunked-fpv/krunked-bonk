@@ -15,7 +15,11 @@
 
 import * as THREE from 'three';
 import type { ElementType, PlayerState, SimEvent, SimState } from '../contracts/index';
-import { createMkToonMaterial } from './toonShader';
+import {
+  createEnergyBeamMaterial,
+  createMkToonMaterial,
+  createShockwaveRingMaterial,
+} from './toonShader';
 
 const CUBE_CAPACITY = 768;
 const RING_CAPACITY = 112;
@@ -102,32 +106,16 @@ export class VfxPool {
     this.cubeMesh.count = 0;
     this.cubeMesh.frustumCulled = false;
 
-    this.ringGeo = new THREE.RingGeometry(0.72, 1.0, 18);
+    this.ringGeo = new THREE.RingGeometry(0.68, 1.0, 24);
     this.ringGeo.rotateX(-Math.PI * 0.5);
-    this.ringMat = createMkToonMaterial({
-      color: 0xffffff,
-      emissive: 0xffffff,
-      emissiveIntensity: 0.85,
-      transparent: true,
-      opacity: 0.82,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
+    this.ringMat = createShockwaveRingMaterial(0xffffff, 0.88);
     this.ringMesh = new THREE.InstancedMesh(this.ringGeo, this.ringMat, RING_CAPACITY);
     this.ringMesh.count = 0;
     this.ringMesh.frustumCulled = false;
 
-    this.beamGeo = new THREE.CylinderGeometry(0.5, 0.5, 1.0, 7, 1, true);
+    this.beamGeo = new THREE.CylinderGeometry(0.45, 0.62, 1.0, 12, 1, true);
     this.beamGeo.translate(0, 0.5, 0);
-    this.beamMat = createMkToonMaterial({
-      color: 0xffffff,
-      emissive: 0xffffff,
-      emissiveIntensity: 1.15,
-      transparent: true,
-      opacity: 0.72,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
+    this.beamMat = createEnergyBeamMaterial(0xffffff, 0.72);
     this.beamMesh = new THREE.InstancedMesh(this.beamGeo, this.beamMat, BEAM_CAPACITY);
     this.beamMesh.count = 0;
     this.beamMesh.frustumCulled = false;
@@ -623,6 +611,7 @@ export class VfxPool {
       activeCubes++;
     }
     this.cubeMesh.count = activeCubes;
+    this.cubeMesh.visible = activeCubes > 0;
     if (activeCubes > 0) {
       this.cubeMesh.instanceMatrix.needsUpdate = true;
       if (this.cubeMesh.instanceColor) this.cubeMesh.instanceColor.needsUpdate = true;
@@ -653,6 +642,7 @@ export class VfxPool {
       activeRings++;
     }
     this.ringMesh.count = activeRings;
+    this.ringMesh.visible = activeRings > 0;
     if (activeRings > 0) {
       this.ringMesh.instanceMatrix.needsUpdate = true;
       if (this.ringMesh.instanceColor) this.ringMesh.instanceColor.needsUpdate = true;
@@ -675,11 +665,16 @@ export class VfxPool {
       this._mat.compose(this._pos, this._quat, this._scale);
       this.beamMesh.setMatrixAt(activeBeams, this._mat);
 
-      this._col.setRGB(this.bColor[i3]!, this.bColor[i3 + 1]!, this.bColor[i3 + 2]!);
+      this._col.setRGB(
+        this.bColor[i3]! * remain,
+        this.bColor[i3 + 1]! * remain,
+        this.bColor[i3 + 2]! * remain,
+      );
       this.beamMesh.setColorAt(activeBeams, this._col);
       activeBeams++;
     }
     this.beamMesh.count = activeBeams;
+    this.beamMesh.visible = activeBeams > 0;
     if (activeBeams > 0) {
       this.beamMesh.instanceMatrix.needsUpdate = true;
       if (this.beamMesh.instanceColor) this.beamMesh.instanceColor.needsUpdate = true;

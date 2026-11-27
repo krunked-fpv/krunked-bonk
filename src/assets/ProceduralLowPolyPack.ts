@@ -105,107 +105,134 @@ export type ProceduralTextureId =
 
 function buildAllProceduralTextures(): Record<ProceduralTextureId, THREE.DataTexture> {
   return {
-    // Lush vibrant dithered Forest grass tile with micro blades and sunlit flecks
-    terrain_grass: makePixelDataTexture(32, 32, (x, y) => {
+    // Rich 64x64 dithered Forest meadow tile with fine blades, clover clusters, pebbles & sunlit flecks
+    terrain_grass: makePixelDataTexture(64, 64, (x, y) => {
       const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const n = hash2D(x >> 1, y >> 1, 11);
+      const nBig = hash2D(x >> 2, y >> 2, 11);
+      const nFine = hash2D(x >> 1, y >> 1, 23);
       const tuft = hash2D(x, y, 29);
-      if (tuft > 0.965) return 0xf2f79c;
-      if (tuft > 0.88 && (y & 3) === 0) return 0xb7eb62;
-      const v = n * 0.72 + bayer * 0.28;
-      if (v > 0.72) return 0x9ce354;
-      if (v > 0.42) return 0x7fd145;
-      if (v > 0.18) return 0x67b83c;
-      return 0x529c3a;
+      // Tiny sunlit dandelion / clover sparkle dots
+      if (tuft > 0.992) return 0xfff59e;
+      if (tuft > 0.985) return 0xebffbd;
+      // Micro pebble accent
+      if (tuft < 0.009) return 0x627c70;
+      // Fine blade vertical micro-stroke
+      if (tuft > 0.91 && (y & 3) === 0) return 0xb8f062;
+      if (tuft < 0.08 && (y & 3) === 2) return 0x458c38;
+      const v = nBig * 0.52 + nFine * 0.28 + bayer * 0.20;
+      if (v > 0.74) return 0x9de656;
+      if (v > 0.50) return 0x80d446;
+      if (v > 0.26) return 0x69bd3e;
+      return 0x529e3a;
     }),
 
-    // Stratified chiseled rock cliff bands with crisp pixel seams
-    terrain_cliff: makePixelDataTexture(32, 32, (x, y) => {
-      const strata = Math.floor((y + Math.sin(x * 0.35) * 1.6) / 6);
-      const seam = (y + Math.floor(Math.sin(x * 0.35) * 1.6)) % 6 === 0;
+    // Rich 64x64 stratified chiseled rock cliff bands with diagonal cracks & mossy crevices
+    terrain_cliff: makePixelDataTexture(64, 64, (x, y) => {
+      const wave = Math.sin(x * 0.22) * 2.2 + Math.cos(x * 0.09) * 1.4;
+      const sy = y + Math.floor(wave);
+      const strata = Math.floor(sy / 9);
+      const seam = ((sy % 9) + 9) % 9 === 0;
+      const vCrack = Math.abs(((x * 3 + strata * 11) & 31) - 16) === 0 && hash2D(x >> 1, strata, 53) > 0.45;
       const n = hash2D(x >> 1, y >> 1, 47);
-      if (seam) return 0x455869;
-      if (strata % 3 === 0) return n > 0.5 ? 0x8ea3b0 : 0x7a909e;
-      if (strata % 3 === 1) return n > 0.45 ? 0x6f8494 : 0x5c7282;
-      return n > 0.5 ? 0x9ab0bd : 0x8398a6;
+      const grain = hash2D(x, y, 59);
+      if (seam && grain > 0.72) return 0x4e7a56; // subtle moss line in rock seam
+      if (seam || vCrack) return 0x3b4d5e;
+      if (grain > 0.94) return 0xb0c4d1; // mineral glint
+      if (strata % 3 === 0) return n > 0.5 ? 0x8fa6b5 : 0x7a92a1;
+      if (strata % 3 === 1) return n > 0.45 ? 0x6f8596 : 0x5c7285;
+      return n > 0.5 ? 0x9bb2bf : 0x8399a8;
     }),
 
-    // Warm wind-rippled Desert dunes with crisp pixelated crest ridges
-    terrain_desert: makePixelDataTexture(32, 32, (x, y) => {
-      const ripple = Math.sin((y + Math.sin(x * 0.28) * 2.4) * 0.82);
+    // Rich 64x64 wind-sculpted fine Desert sand ripples with sparkling quartz grains & pebbles
+    terrain_desert: makePixelDataTexture(64, 64, (x, y) => {
+      const ripple = Math.sin((y + Math.sin(x * 0.19) * 3.2) * 0.58);
+      const ripple2 = Math.sin((y * 1.4 - Math.cos(x * 0.14) * 2.0) * 0.35);
       const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
       const grain = hash2D(x, y, 83);
-      const n = grain * 0.22 + ripple * 0.52 + 0.5;
-      if (grain > 0.965) return 0xfff1bf; // sparkling quartz grain
-      if (n + bayer * 0.18 > 0.92) return 0xffe4a3;
-      if (n > 0.56) return 0xf2c26b;
-      if (n > 0.28) return 0xdba14d;
-      return 0xc28538;
+      const patch = hash2D(x >> 2, y >> 2, 79);
+      const n = grain * 0.16 + patch * 0.16 + ripple * 0.44 + ripple2 * 0.16 + 0.48;
+      if (grain > 0.985) return 0xfff6cf; // sparkling quartz grain
+      if (grain < 0.008) return 0x9e6334; // tiny sandstone pebble
+      if (n + bayer * 0.14 > 0.88) return 0xffe6a8;
+      if (n > 0.62) return 0xf4c873;
+      if (n > 0.36) return 0xdfa752;
+      return 0xc6893b;
     }),
 
-    // Banded Desert sandstone blocks for ruins, obelisks & Sand Golem
-    desert_sandstone: makePixelDataTexture(32, 32, (x, y) => {
-      const row = y >> 3;
-      const bx = (x + (row & 1) * 8) & 15;
-      const by = y & 7;
-      if (bx === 0 || by === 0) return 0x6e4226;
-      const strata = (y + Math.floor(Math.sin(x * 0.4) * 1.2)) % 5;
+    // Rich 64x64 banded Desert sandstone masonry for cliffs, ruins, obelisks & Sand Golem
+    desert_sandstone: makePixelDataTexture(64, 64, (x, y) => {
+      const row = y >> 4;
+      const bx = (x + (row & 1) * 16) & 31;
+      const by = y & 15;
+      const grain = hash2D(x, y, 91);
+      if (bx === 0 || by === 0) return 0x693e23;
+      if (by === 1 && grain > 0.35) return 0xf7d28d; // sunlit bevel lip
+      const strata = (y + Math.floor(Math.sin(x * 0.25) * 1.8)) % 7;
       const n = hash2D(x >> 1, y >> 1, 89);
-      if (strata === 0) return 0xc77d42;
-      return n > 0.6 ? 0xf0be74 : n > 0.28 ? 0xde9f52 : 0xc9863c;
+      if (strata === 0) return 0xc4773d;
+      if (strata === 3) return 0xe3a85b;
+      return n > 0.62 ? 0xf2c278 : n > 0.28 ? 0xde9e50 : 0xc7833a;
     }),
 
     // Ribbed emerald-sage Desert saguaro cactus pixel pleats with tiny pale spines
     desert_cactus: makePixelDataTexture(32, 32, (x, y) => {
       const rib = x & 3;
-      if (rib === 0) return 0x266130;
-      if (rib === 2 && (y & 3) === 1) return 0xf7f2c8; // tiny pixel spine dot
+      if (rib === 0) return 0x245e2e;
+      if (rib === 2 && (y & 3) === 1) return 0xf7f2c8;
       const n = hash2D(x >> 1, y >> 1, 97);
-      return rib === 2 ? (n > 0.4 ? 0x73cf57 : 0x5ab846) : 0x3e913d;
+      return rib === 2 ? (n > 0.4 ? 0x76d459 : 0x5cb846) : 0x3e913d;
     }),
 
-    // Weathered haunted Graveyard flagstone pavers with violet moss cracks
-    terrain_graveyard: makePixelDataTexture(32, 32, (x, y) => {
+    // Rich 64x64 weathered haunted Graveyard flagstone pavers with bevels & violet moss cracks
+    terrain_graveyard: makePixelDataTexture(64, 64, (x, y) => {
+      const row = y >> 4;
+      const ox = (x + (row & 1) * 8) & 15;
+      const oy = y & 15;
+      const grain = hash2D(x, y, 107);
+      if (ox === 0 || oy === 0) return grain > 0.66 ? 0x674394 : 0x1d1a2e;
+      if ((ox === 1 || oy === 1) && grain > 0.45) return 0x747e99; // stone bevel edge
+      const tileN = hash2D((x + (row & 1) * 8) >> 4, row, 111);
+      const n = hash2D(x >> 1, y >> 1, 109);
+      if (n > 0.86 && tileN > 0.4) return 0x624f8c; // haunted violet moss patch
+      const shade = tileN * 0.45 + n * 0.55;
+      if (shade > 0.66) return 0x66708a;
+      if (shade > 0.34) return 0x525b73;
+      return 0x40485e;
+    }),
+
+    // Rich 64x64 moonlit Graveyard cobblestone for tombstones, cliffs & crypt arches
+    graveyard_cobble: makePixelDataTexture(64, 64, (x, y) => {
       const row = y >> 3;
-      const ox = (x + (row & 1) * 4) & 7;
+      const ox = (x + (row & 1) * 6) % 12;
       const oy = y & 7;
-      if (ox === 0 || oy === 0) return hash2D(x, y, 107) > 0.72 ? 0x5e3d85 : 0x211e33;
-      const n = hash2D(x >> 2, y >> 2, 109);
-      if (n > 0.82) return 0x5d4c82; // haunted violet moss tuft
-      if (n > 0.55) return 0x646e87;
-      if (n > 0.28) return 0x505970;
-      return 0x3f475c;
-    }),
-
-    // Detailed moonlit Graveyard cobblestone for tombstones & crypt arches
-    graveyard_cobble: makePixelDataTexture(32, 32, (x, y) => {
-      const row = y >> 2;
-      const ox = (x + (row & 1) * 3) % 6;
-      const oy = y & 3;
-      if (ox === 0 || oy === 0) return 0x1b1a29;
+      if (ox === 0 || oy === 0) return 0x191726;
+      if (oy === 1) return 0x808ca8;
       const n = hash2D(x >> 1, y >> 1, 113);
-      if (n > 0.85) return 0x7a59a8;
-      return n > 0.5 ? 0x76829c : n > 0.22 ? 0x5a647a : 0x454d61;
+      if (n > 0.86) return 0x7c5bad;
+      return n > 0.52 ? 0x74809c : n > 0.22 ? 0x59637a : 0x444c61;
     }),
 
     // Gothic wrought-iron rivets & subtle blue-violet metal sheen
     graveyard_iron: makePixelDataTexture(16, 16, (x, y) => {
-      if ((x === 3 || x === 12) && (y === 3 || y === 12)) return 0x8e9eb8;
-      if (x === 0 || y === 0) return 0x161924;
+      if ((x === 3 || x === 12) && (y === 3 || y === 12)) return 0x95a6c2;
+      if (x === 0 || y === 0) return 0x151824;
       const n = hash2D(x, y, 127);
-      return n > 0.65 ? 0x454f63 : n > 0.3 ? 0x32394a : 0x242938;
+      return n > 0.65 ? 0x485369 : n > 0.3 ? 0x333b4d : 0x242a3a;
     }),
 
-    // Obsidian FinalBossMap colosseum tiles with gilded gold & violet hairline seams
-    terrain_citadel: makePixelDataTexture(32, 32, (x, y) => {
-      const bx = x & 7;
-      const by = y & 7;
+    // Rich 64x64 Obsidian FinalBossMap colosseum tiles with gilded gold & violet hairline seams
+    terrain_citadel: makePixelDataTexture(64, 64, (x, y) => {
+      const bx = x & 15;
+      const by = y & 15;
+      const g = hash2D(x, y, 131);
       if (bx === 0 || by === 0) {
-        const g = hash2D(x, y, 131);
-        return g > 0.75 ? 0xffc83b : g > 0.5 ? 0xa832d9 : 0x181124;
+        return g > 0.82 ? 0xffcb42 : g > 0.55 ? 0xa832d9 : 0x160f24;
       }
+      if ((bx === 1 || by === 1) && g > 0.5) return 0x493963;
+      const tileHash = hash2D(x >> 4, y >> 4, 139);
       const n = hash2D(x >> 1, y >> 1, 137);
-      return n > 0.65 ? 0x3c304f : n > 0.3 ? 0x2d233d : 0x21192e;
+      const v = tileHash * 0.4 + n * 0.6;
+      return v > 0.66 ? 0x3d3052 : v > 0.32 ? 0x2d223e : 0x20182e;
     }),
 
     // Chiseled Obsidian-Gold Citadel pillar & FinalBoss armor weave
@@ -217,14 +244,16 @@ function buildAllProceduralTextures(): Record<ProceduralTextureId, THREE.DataTex
     }),
 
     // Glowing molten magma & void veins for FinalBossMap rim / Floor-is-Lava
-    citadel_magma: makePixelDataTexture(32, 32, (x, y) => {
-      const wave = Math.sin(x * 0.45 + Math.cos(y * 0.35) * 1.8) + Math.cos(y * 0.4 - x * 0.25);
+    citadel_magma: makePixelDataTexture(64, 64, (x, y) => {
+      const wave =
+        Math.sin(x * 0.25 + Math.cos(y * 0.21) * 2.1) +
+        Math.cos(y * 0.24 - x * 0.16);
       const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const v = wave * 0.3 + 0.5 + bayer * 0.16;
-      if (v > 0.92) return 0xfff08a;
-      if (v > 0.74) return 0xff7b1f;
-      if (v > 0.54) return 0xd92638;
-      if (v > 0.32) return 0x4f1224;
+      const v = wave * 0.3 + 0.5 + bayer * 0.14;
+      if (v > 0.90) return 0xfff394;
+      if (v > 0.72) return 0xff7b1f;
+      if (v > 0.52) return 0xd92638;
+      if (v > 0.30) return 0x4f1224;
       return 0x1d0c1c;
     }),
 
@@ -270,9 +299,9 @@ function buildAllProceduralTextures(): Record<ProceduralTextureId, THREE.DataTex
       const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
       const n = hash2D(x >> 1, y >> 1, 307);
       const v = n * 0.68 + bayer * 0.32;
-      if (v > 0.76) return 0xb2ed6d;
-      if (v > 0.45) return 0x7fd455;
-      if (v > 0.2) return 0x59b048;
+      if (v > 0.76) return 0xb8f272;
+      if (v > 0.45) return 0x82d657;
+      if (v > 0.2) return 0x5bb349;
       return 0x3d8a42;
     }),
 
@@ -282,8 +311,8 @@ function buildAllProceduralTextures(): Record<ProceduralTextureId, THREE.DataTex
       const cy = (y & 7) - 3.5;
       const dist = Math.hypot(cx, cy);
       const n = hash2D(x >> 3, y >> 3, 353);
-      if (dist < 2.2) return n > 0.5 ? 0xd9fa75 : 0xb4eb5b;
-      if (dist < 3.6) return 0x86d448;
+      if (dist < 2.2) return n > 0.5 ? 0xdcfa78 : 0xb6ed5c;
+      if (dist < 3.6) return 0x88d649;
       return 0x58a83e;
     }),
 

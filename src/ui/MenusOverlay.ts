@@ -22,6 +22,43 @@ import {
   type ShopUpgradeId,
   type SimState,
 } from '../contracts';
+import {
+  createSvgIcon,
+  getBrandCrestSvg,
+  getCharacterAvatarSvg,
+  getItemIconSvg,
+  getShopIconSvg,
+  getTomeIconSvg,
+  getUiIconSvg,
+  getWeaponIconSvg,
+  RARITY_COLOR_HEX,
+  type UiIconName,
+} from './UiIcons';
+
+const ELEMENT_COLORS: Record<string, string> = {
+  Physical: '#cbd5e1',
+  Fire: '#f97316',
+  Ice: '#38bdf8',
+  Lightning: '#facc15',
+  Poison: '#4ade80',
+  Void: '#a855f7',
+  Holy: '#fde68a',
+};
+
+function shortMapName(mapId: MapId): string {
+  switch (mapId) {
+    case 'Forest':
+      return 'FOREST';
+    case 'Desert':
+      return 'DESERT';
+    case 'Graveyard':
+      return 'GRAVEYARD';
+    case 'FinalBossMap':
+      return 'CITADEL';
+    default:
+      return String(mapId).toUpperCase();
+  }
+}
 
 export interface BoomboxTrackOption {
   readonly id: string;
@@ -605,33 +642,69 @@ export class MenusOverlay {
   }
 
   // --------------------------------------------------------------------------
-  // 1. TITLE SCREEN
+  // 1. TITLE SCREEN (HERO SHOWCASE DOCK)
   // --------------------------------------------------------------------------
   private renderTitle(view: MenusViewState): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'kb-panel--gothic kb-title-screen';
 
+    const brand = document.createElement('div');
+    brand.className = 'kb-title-brand';
+    const crest = createSvgIcon(getBrandCrestSvg(46), 'kb-title-crest');
+    const brandText = document.createElement('div');
+    brandText.className = 'kb-title-brand-text';
     const logo = document.createElement('h1');
     logo.className = 'kb-logo';
     logo.textContent = GAME_TITLE;
-
     const sub = document.createElement('p');
     sub.className = 'kb-logo-sub';
-    sub.textContent = '3D KINETIC PIXEL-GOTHIC HORDE SURVIVOR';
+    sub.textContent = '3D KINETIC HORDE SURVIVOR';
+    brandText.append(logo, sub);
+    brand.append(crest, brandText);
 
     const statusRow = document.createElement('div');
-    statusRow.className = 'kb-hint-bar';
+    statusRow.className = 'kb-title-status';
+
+    const selectedChar =
+      view.catalog.characters.find((c) => c.id === view.save.selectedCharacter) ??
+      view.catalog.characters[0];
+    if (selectedChar) {
+      const heroChip = document.createElement('span');
+      heroChip.className = 'kb-badge kb-badge--hero';
+      heroChip.append(
+        createSvgIcon(getCharacterAvatarSvg(selectedChar, 18), 'kb-badge-avatar'),
+        document.createTextNode(
+          `${selectedChar.displayName.toUpperCase()} • ${shortMapName(view.save.selectedMap)} T${view.save.selectedMapTier}`,
+        ),
+      );
+      statusRow.appendChild(heroChip);
+    }
+
     const silverBadge = document.createElement('span');
     silverBadge.className = 'kb-badge kb-badge--silver';
-    silverBadge.textContent = `SILVER: ${view.save.silver}`;
+    silverBadge.append(
+      createSvgIcon(getUiIconSvg('silver', 13), 'kb-badge-icon'),
+      document.createTextNode(`${view.save.silver} SILVER`),
+    );
+
+    const deviceIcon: UiIconName =
+      view.activeDevice === 'gamepad'
+        ? 'gamepad'
+        : view.activeDevice === 'touch'
+          ? 'touch'
+          : 'keyboard';
     const deviceBadge = document.createElement('span');
     deviceBadge.className = 'kb-badge kb-badge--cyan';
-    deviceBadge.textContent =
-      view.activeDevice === 'gamepad'
-        ? `CONTROLLER: ${profileLabel(view.gamepadProfile)}`
-        : view.activeDevice === 'touch'
-          ? 'INPUT: TOUCH'
-          : 'INPUT: KEYBOARD & MOUSE';
+    deviceBadge.append(
+      createSvgIcon(getUiIconSvg(deviceIcon, 13), 'kb-badge-icon'),
+      document.createTextNode(
+        view.activeDevice === 'gamepad'
+          ? profileLabel(view.gamepadProfile)
+          : view.activeDevice === 'touch'
+            ? 'TOUCH'
+            : 'KB & MOUSE',
+      ),
+    );
     statusRow.append(silverBadge, deviceBadge);
 
     // Count claimable quests for live Title indicator
@@ -646,49 +719,73 @@ export class MenusOverlay {
     const nav = document.createElement('div');
     nav.className = 'kb-title-nav';
 
-    const playBtn = this.makeButton('PLAY', 'title-play', 'kb-btn--primary', () =>
-      this.callbacks.onPlay(),
+    const playBtn = this.makeButton(
+      'PLAY',
+      'title-play',
+      'kb-btn--primary kb-btn--hero',
+      () => this.callbacks.onPlay(),
+      'play',
     );
     playBtn.setAttribute('data-kb-focus-default', 'true');
 
+    const secondaryNav = document.createElement('div');
+    secondaryNav.className = 'kb-title-nav-secondary';
+
     const questsLabel =
       claimableCount > 0
-        ? `QUESTS (${claimableCount} READY!)`
+        ? `QUESTS (${claimableCount}!)`
         : `QUESTS (${view.save.claimedQuests.length}/${view.catalog.quests.length})`;
 
-    nav.append(
-      playBtn,
-      this.makeButton('CHARACTERS', 'title-chars', '', () =>
-        this.callbacks.onOpenCharacters(),
+    secondaryNav.append(
+      this.makeButton(
+        'FIGHTERS',
+        'title-chars',
+        '',
+        () => this.callbacks.onOpenCharacters(),
+        'fighters',
       ),
       this.makeButton(
         questsLabel,
         'title-quests',
         claimableCount > 0 ? 'kb-btn--accent' : '',
         () => this.callbacks.onOpenQuests?.(),
+        'quests',
       ),
-      this.makeButton(`META SHOP (${view.save.silver} SILVER)`, 'title-shop', '', () =>
-        this.callbacks.onOpenShop(),
+      this.makeButton(
+        `SHOP (${view.save.silver}S)`,
+        'title-shop',
+        '',
+        () => this.callbacks.onOpenShop(),
+        'shop',
       ),
-      this.makeButton('OPTIONS', 'title-options', '', () => this.callbacks.onOpenOptions()),
+      this.makeButton(
+        'OPTIONS',
+        'title-options',
+        '',
+        () => this.callbacks.onOpenOptions(),
+        'settings',
+      ),
     );
+
+    nav.append(playBtn, secondaryNav);
 
     // Custom Pack Loader + Live Art Source Toggle
     const packRow = document.createElement('div');
     packRow.className = 'kb-pack-row';
 
     const loadPackBtn = this.makeButton(
-      view.customPackLoaded ? 'RELOAD CUSTOM PACK' : 'LOAD CUSTOM PACK',
+      view.customPackLoaded ? 'RELOAD PACK' : 'CUSTOM PACK',
       'title-load-pack',
-      'kb-btn--sm',
+      'kb-btn--sm kb-btn--ghost',
       () => this.callbacks.onLoadCustomPack(),
+      'pack',
     );
 
     const usingCustom = Boolean(view.save.customPackEnabled && view.customPackLoaded);
     const artToggleBtn = this.makeButton(
-      usingCustom ? 'USE CUSTOM PACK' : 'USE BUILT-IN ART',
+      usingCustom ? 'ART: CUSTOM' : 'ART: BUILT-IN',
       'title-toggle-pack',
-      usingCustom ? 'kb-btn--sm kb-btn--accent' : 'kb-btn--sm',
+      usingCustom ? 'kb-btn--sm kb-btn--accent' : 'kb-btn--sm kb-btn--ghost',
       () => this.callbacks.onToggleCustomPack(!view.save.customPackEnabled),
     );
     artToggleBtn.setAttribute('data-kb-art-toggle', usingCustom ? 'custom' : 'builtin');
@@ -696,10 +793,10 @@ export class MenusOverlay {
     packRow.append(loadPackBtn, artToggleBtn);
 
     const hints = document.createElement('div');
-    hints.className = 'kb-hint-bar';
+    hints.className = 'kb-hint-bar kb-title-hints';
     hints.textContent = deviceHintText(view.activeDevice, view.gamepadProfile);
 
-    panel.append(logo, sub, statusRow, nav, packRow, hints);
+    panel.append(brand, statusRow, nav, packRow, hints);
     return panel;
   }
 
@@ -719,7 +816,10 @@ export class MenusOverlay {
     header.className = 'kb-modal-header';
     const title = document.createElement('h2');
     title.className = 'kb-modal-title';
-    title.textContent = 'CHOOSE FIGHTER & ARENA';
+    title.append(
+      createSvgIcon(getUiIconSvg('fighters', 20), 'kb-title-icon'),
+      document.createTextNode('CHOOSE FIGHTER & ARENA'),
+    );
     const badgeWrap = document.createElement('div');
     badgeWrap.className = 'kb-header-badges';
     const countBadge = document.createElement('span');
@@ -773,12 +873,15 @@ export class MenusOverlay {
 
     if (selectedCharDef) {
       const startWep = view.catalog.weapons.find((w) => w.id === selectedCharDef.startingWeaponId);
+      const startWepCol = ELEMENT_COLORS[startWep?.element ?? 'Physical'] ?? '#fbbf24';
       const fighterHead = document.createElement('div');
       fighterHead.className = 'kb-inspector-head';
 
-      const swatch = document.createElement('span');
-      swatch.className = 'kb-swatch kb-swatch--lg';
-      swatch.style.background = `linear-gradient(135deg, ${selectedCharDef.primaryColorHex} 55%, ${selectedCharDef.accentColorHex} 55%)`;
+      const avatarWrap = createSvgIcon(
+        getCharacterAvatarSvg(selectedCharDef, 52),
+        'kb-inspector-avatar',
+      );
+      avatarWrap.style.setProperty('--kb-accent', selectedCharDef.primaryColorHex);
 
       const headText = document.createElement('div');
       headText.className = 'kb-inspector-title-wrap';
@@ -786,17 +889,26 @@ export class MenusOverlay {
       inspTitle.className = 'kb-inspector-name';
       inspTitle.textContent = `${selectedCharDef.displayName.toUpperCase()} — ${selectedCharDef.title}`;
       const wepLine = document.createElement('div');
-      wepLine.className = 'kb-char-weapon';
-      wepLine.textContent = `STARTER: ${startWep?.displayName ?? selectedCharDef.startingWeaponId}`;
+      wepLine.className = 'kb-char-weapon kb-char-weapon--row';
+      wepLine.append(
+        createSvgIcon(
+          getWeaponIconSvg(selectedCharDef.startingWeaponId, startWepCol, 15),
+          'kb-inline-icon',
+        ),
+        document.createTextNode(`STARTER: ${startWep?.displayName ?? selectedCharDef.startingWeaponId}`),
+      );
       headText.append(inspTitle, wepLine);
-      fighterHead.append(swatch, headText);
+      fighterHead.append(avatarWrap, headText);
 
       // Passive Card
       const passiveCard = document.createElement('div');
       passiveCard.className = 'kb-passive-card';
       const passiveTitle = document.createElement('div');
       passiveTitle.className = 'kb-passive-card-title';
-      passiveTitle.textContent = `PASSIVE: ${selectedCharDef.passive.name}`;
+      passiveTitle.append(
+        createSvgIcon(getUiIconSvg('star', 13), 'kb-inline-icon'),
+        document.createTextNode(`PASSIVE: ${selectedCharDef.passive.name}`),
+      );
       const passiveDesc = document.createElement('div');
       passiveDesc.className = 'kb-passive-card-desc';
       passiveDesc.textContent = selectedCharDef.passive.description;
@@ -1018,11 +1130,19 @@ export class MenusOverlay {
 
     const footer = document.createElement('div');
     footer.className = 'kb-modal-footer';
-    const backBtn = this.makeButton('BACK', 'select-back', '', () =>
-      this.callbacks.onBackToTitle(),
+    const backBtn = this.makeButton(
+      'BACK',
+      'select-back',
+      '',
+      () => this.callbacks.onBackToTitle(),
+      'back',
     );
-    const startBtn = this.makeButton('START RUN', 'select-start', 'kb-btn--primary', () =>
-      this.callbacks.onStartRun(),
+    const startBtn = this.makeButton(
+      'START RUN',
+      'select-start',
+      'kb-btn--primary',
+      () => this.callbacks.onStartRun(),
+      'play',
     );
     footer.append(backBtn, startBtn);
 
@@ -1044,27 +1164,43 @@ export class MenusOverlay {
     card.disabled = !unlocked;
     card.setAttribute('data-kb-focus', 'true');
     card.setAttribute('data-kb-focus-id', `char-${ch.id}`);
+    card.style.setProperty('--kb-char-color', ch.primaryColorHex);
 
     const top = document.createElement('div');
     top.className = 'kb-char-top';
-    const swatch = document.createElement('span');
-    swatch.className = 'kb-swatch';
-    swatch.style.background = `linear-gradient(135deg, ${ch.primaryColorHex} 55%, ${ch.accentColorHex} 55%)`;
+
+    const avatarWrap = document.createElement('span');
+    avatarWrap.className = 'kb-char-avatar';
+    avatarWrap.innerHTML = getCharacterAvatarSvg(ch, 34);
+    if (!unlocked) {
+      const lockBadge = createSvgIcon(getUiIconSvg('lock', 12), 'kb-char-lock-badge');
+      avatarWrap.appendChild(lockBadge);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'kb-char-meta';
+
     const name = document.createElement('span');
     name.className = 'kb-char-name';
-    name.textContent = unlocked ? ch.displayName : `${ch.displayName} [LOCK]`;
-    top.append(swatch, name);
+    name.textContent = ch.displayName;
 
     const wep = catalog.weapons.find((w) => w.id === ch.startingWeaponId);
+    const wepCol = ELEMENT_COLORS[wep?.element ?? 'Physical'] ?? '#fbbf24';
     const weaponLine = document.createElement('div');
-    weaponLine.className = 'kb-char-weapon';
-    weaponLine.textContent = wep?.displayName ?? ch.startingWeaponId;
+    weaponLine.className = 'kb-char-weapon kb-char-weapon--row';
+    weaponLine.append(
+      createSvgIcon(getWeaponIconSvg(ch.startingWeaponId, wepCol, 12), 'kb-inline-icon'),
+      document.createTextNode(wep?.displayName ?? ch.startingWeaponId),
+    );
+
+    meta.append(name, weaponLine);
+    top.append(avatarWrap, meta);
 
     const passive = document.createElement('div');
     passive.className = 'kb-char-passive';
     passive.textContent = unlocked ? ch.passive.name : 'QUEST LOCKED';
 
-    card.append(top, weaponLine, passive);
+    card.append(top, passive);
     card.addEventListener('click', () => {
       if (unlocked) this.callbacks.onSelectCharacter(ch.id);
     });
@@ -1220,7 +1356,10 @@ export class MenusOverlay {
       const goldBadge = document.createElement('span');
       goldBadge.className = 'kb-badge kb-badge--gold';
       goldBadge.setAttribute('data-kb-player-gold', String(playerGold));
-      goldBadge.textContent = `GOLD: ${playerGold}`;
+      goldBadge.append(
+        createSvgIcon(getUiIconSvg('gold', 13), 'kb-badge-icon'),
+        document.createTextNode(`${playerGold} GOLD`),
+      );
       headerBadges.appendChild(goldBadge);
     }
 
@@ -1299,6 +1438,32 @@ export class MenusOverlay {
         }
       }
 
+      // Resolve collectible SVG medallion icon & glow tint for this offer
+      let medallionSvg = '';
+      let medallionTint = RARITY_COLOR_HEX[choice.rarity] ?? '#fbbf24';
+      if (choice.category === 'weapon') {
+        const wDef = view.catalog.weapons.find((w) => w.id === choice.refId);
+        const elemCol = ELEMENT_COLORS[wDef?.element ?? 'Physical'] ?? '#fbbf24';
+        medallionTint = elemCol;
+        medallionSvg = getWeaponIconSvg(choice.refId, elemCol, 36);
+      } else if (choice.category === 'tome') {
+        const tDef = view.catalog.tomes.find((t) => t.id === choice.refId);
+        const tomeCol = tDef?.colorHex ?? '#38bdf8';
+        medallionTint = tomeCol;
+        medallionSvg = getTomeIconSvg(choice.refId, tomeCol, 36);
+      } else if (choice.category === 'item' || choice.category === 'duplicate_item') {
+        medallionSvg = getItemIconSvg(choice.refId, choice.rarity, 34);
+      } else {
+        medallionTint = isBalance ? '#c084fc' : '#38bdf8';
+        medallionSvg = getUiIconSvg(isBalance ? 'flame' : 'bolt', 32);
+      }
+
+      const medallion = createSvgIcon(medallionSvg, 'kb-offer-medallion');
+      medallion.style.setProperty('--kb-medallion-color', medallionTint);
+
+      const main = document.createElement('div');
+      main.className = 'kb-offer-main';
+
       const top = document.createElement('div');
       top.className = 'kb-offer-top';
       const rarity = document.createElement('span');
@@ -1312,10 +1477,14 @@ export class MenusOverlay {
               : 'BLESSING'
             : choice.category.replace('_', ' ');
       rarity.textContent = `${choice.rarity} • ${catLabel}`;
-      const key = document.createElement('span');
-      key.className = 'kb-offer-key';
-      key.textContent = `[${i + 1}]`;
-      top.append(rarity, key);
+      top.appendChild(rarity);
+
+      if (view.activeDevice !== 'touch') {
+        const key = document.createElement('span');
+        key.className = 'kb-offer-key';
+        key.textContent = `[${i + 1}]`;
+        top.appendChild(key);
+      }
 
       const name = document.createElement('div');
       name.className = 'kb-offer-name';
@@ -1325,7 +1494,7 @@ export class MenusOverlay {
       diff.className = 'kb-offer-diff';
 
       if (this.banishArmed) {
-        diff.textContent = 'CLICK / CONFIRM TO BANISH FROM RUN';
+        diff.textContent = 'TAP / CONFIRM TO BANISH';
         diff.classList.add('is-danger');
       } else if (isMicrowave || choice.category === 'duplicate_item') {
         const ownedStacks =
@@ -1351,7 +1520,7 @@ export class MenusOverlay {
       desc.className = 'kb-offer-desc';
       desc.textContent = choice.description;
 
-      card.append(top, name, diff, desc);
+      main.append(top, name, diff, desc);
 
       // Explicit Gold price tag footer on Merchant / Microwave / paid offers
       if (choice.goldCost !== undefined) {
@@ -1363,10 +1532,12 @@ export class MenusOverlay {
           goldCost <= 0
             ? 'FREE'
             : cantAfford
-              ? `COST: ${goldCost} GOLD (INSUFFICIENT)`
+              ? `COST: ${goldCost} GOLD (LOCKED)`
               : `COST: ${goldCost} GOLD`;
-        card.appendChild(priceTag);
+        main.appendChild(priceTag);
       }
+
+      card.append(medallion, main);
 
       card.addEventListener('click', () => {
         if (this.banishArmed) {
@@ -1408,16 +1579,23 @@ export class MenusOverlay {
           'draft-reroll',
           'kb-btn--sm kb-btn--accent',
           () => this.callbacks.onRerollDraft(),
+          'refresh',
         );
         refreshBtn.disabled = rerolls <= 0;
         actions.appendChild(refreshBtn);
       }
 
       const leaveLabel = isMerchant ? 'LEAVE SHOP' : 'LEAVE MICROWAVE';
-      const leaveBtn = this.makeButton(leaveLabel, 'draft-leave', 'kb-btn--sm', () => {
-        this.banishArmed = false;
-        this.callbacks.onSkipDraft();
-      });
+      const leaveBtn = this.makeButton(
+        leaveLabel,
+        'draft-leave',
+        'kb-btn--sm',
+        () => {
+          this.banishArmed = false;
+          this.callbacks.onSkipDraft();
+        },
+        'back',
+      );
       if (!firstFocusableAssigned || affordableCount === 0) {
         leaveBtn.setAttribute('data-kb-focus-default', 'true');
       }
@@ -1431,17 +1609,24 @@ export class MenusOverlay {
           this.banishArmed = false;
           this.callbacks.onRerollDraft();
         },
+        'refresh',
       );
       refreshBtn.disabled = !offer?.canReroll || rerolls <= 0;
 
-      const skipBtn = this.makeButton(`SKIP (${skips})`, 'draft-skip', 'kb-btn--sm', () => {
-        this.banishArmed = false;
-        this.callbacks.onSkipDraft();
-      });
+      const skipBtn = this.makeButton(
+        `SKIP (${skips})`,
+        'draft-skip',
+        'kb-btn--sm',
+        () => {
+          this.banishArmed = false;
+          this.callbacks.onSkipDraft();
+        },
+        'skip',
+      );
       skipBtn.disabled = !offer?.canSkip || skips <= 0;
 
       const banishBtn = this.makeButton(
-        this.banishArmed ? 'CANCEL BANISH' : `BANISH (${banishes})`,
+        this.banishArmed ? 'CANCEL' : `BANISH (${banishes})`,
         'draft-banish',
         'kb-btn--sm kb-btn--danger',
         () => {
@@ -1451,6 +1636,7 @@ export class MenusOverlay {
             this.onRerenderCallback?.();
           }
         },
+        'banish',
       );
       banishBtn.disabled = !this.banishArmed && (!offer?.canBanish || banishes <= 0);
 
@@ -1459,7 +1645,14 @@ export class MenusOverlay {
 
     const hint = document.createElement('div');
     hint.className = 'kb-hint-bar';
-    if (isMerchant || isMicrowave) {
+    if (view.activeDevice === 'touch') {
+      hint.textContent =
+        isMerchant || isMicrowave
+          ? 'TAP A DEAL TO EQUIP  •  TAP LEAVE TO EXIT'
+          : this.banishArmed
+            ? 'TAP AN UPGRADE CARD TO BANISH IT FROM THIS RUN'
+            : 'TAP AN UPGRADE CARD TO EQUIP';
+    } else if (isMerchant || isMicrowave) {
       hint.textContent =
         view.activeDevice === 'gamepad'
           ? 'L-STICK / D-PAD SELECT  •  A BUY/CLONE  •  B LEAVE'
@@ -1505,7 +1698,10 @@ export class MenusOverlay {
     header.className = 'kb-modal-header';
     const title = document.createElement('h2');
     title.className = 'kb-modal-title';
-    title.textContent = 'QUESTS & UNLOCKS';
+    title.append(
+      createSvgIcon(getUiIconSvg('trophy', 20), 'kb-title-icon'),
+      document.createTextNode('QUESTS & UNLOCKS'),
+    );
 
     const headerBadges = document.createElement('div');
     headerBadges.className = 'kb-header-badges';
@@ -1520,7 +1716,10 @@ export class MenusOverlay {
     progressBadge.textContent = `${claimedCount} / ${enriched.length} CLAIMED`;
     const silverBadge = document.createElement('span');
     silverBadge.className = 'kb-badge kb-badge--silver';
-    silverBadge.textContent = `SILVER: ${view.save.silver}`;
+    silverBadge.append(
+      createSvgIcon(getUiIconSvg('silver', 13), 'kb-badge-icon'),
+      document.createTextNode(`${view.save.silver} SILVER`),
+    );
     headerBadges.append(progressBadge, silverBadge);
     header.append(title, headerBadges);
 
@@ -1655,10 +1854,16 @@ export class MenusOverlay {
     header.className = 'kb-modal-header';
     const title = document.createElement('h2');
     title.className = 'kb-modal-title';
-    title.textContent = 'META SHOP';
+    title.append(
+      createSvgIcon(getUiIconSvg('shop', 20), 'kb-title-icon'),
+      document.createTextNode('META SHOP'),
+    );
     const silverBadge = document.createElement('span');
     silverBadge.className = 'kb-badge kb-badge--silver';
-    silverBadge.textContent = `SILVER: ${view.save.silver}`;
+    silverBadge.append(
+      createSvgIcon(getUiIconSvg('silver', 13), 'kb-badge-icon'),
+      document.createTextNode(`${view.save.silver} SILVER`),
+    );
     header.append(title, silverBadge);
 
     const body = document.createElement('div');
@@ -1681,9 +1886,19 @@ export class MenusOverlay {
       card.className = 'kb-shop-card';
       if (maxed) card.classList.add('is-maxed');
 
+      const cardHead = document.createElement('div');
+      cardHead.className = 'kb-shop-card-head';
+      const iconBox = createSvgIcon(getShopIconSvg(upg.id, 22), 'kb-shop-icon-box');
+      const headText = document.createElement('div');
+      headText.className = 'kb-shop-head-text';
       const name = document.createElement('div');
       name.className = 'kb-char-name';
       name.textContent = upg.displayName;
+      const rankText = document.createElement('div');
+      rankText.className = 'kb-char-weapon';
+      rankText.textContent = `RANK ${rank} / ${upg.maxRank}`;
+      headText.append(name, rankText);
+      cardHead.append(iconBox, headText);
 
       const desc = document.createElement('div');
       desc.className = 'kb-char-passive';
@@ -1702,10 +1917,6 @@ export class MenusOverlay {
         if (i < rank) pip.classList.add('is-filled');
         pips.appendChild(pip);
       }
-
-      const rankText = document.createElement('div');
-      rankText.className = 'kb-char-weapon';
-      rankText.textContent = `RANK ${rank} / ${upg.maxRank}`;
 
       const btnRow = document.createElement('div');
       btnRow.className = 'kb-shop-actions';
@@ -1727,7 +1938,7 @@ export class MenusOverlay {
       refundBtn.disabled = rank <= 0;
 
       btnRow.append(buyBtn, refundBtn);
-      card.append(name, desc, preview, pips, rankText, btnRow);
+      card.append(cardHead, desc, preview, pips, btnRow);
       grid.appendChild(card);
     }
 
@@ -1736,8 +1947,12 @@ export class MenusOverlay {
     const footer = document.createElement('div');
     footer.className = 'kb-modal-footer';
 
-    const backBtn = this.makeButton('BACK TO TITLE', 'shop-back', '', () =>
-      this.callbacks.onBackToTitle(),
+    const backBtn = this.makeButton(
+      'BACK TO TITLE',
+      'shop-back',
+      '',
+      () => this.callbacks.onBackToTitle(),
+      'back',
     );
 
     const refundAllBtn = this.makeButton(
@@ -1775,11 +1990,14 @@ export class MenusOverlay {
     header.className = 'kb-modal-header';
     const title = document.createElement('h2');
     title.className = 'kb-modal-title';
-    title.textContent = 'PAUSED';
+    title.append(
+      createSvgIcon(getUiIconSvg('pause', 19), 'kb-title-icon'),
+      document.createTextNode('PAUSED'),
+    );
     const stageBadge = document.createElement('span');
     stageBadge.className = 'kb-badge';
     stageBadge.textContent = view.state
-      ? `${view.state.mapId.toUpperCase()} T${view.state.mapTier} • LV ${view.state.player.level}`
+      ? `${shortMapName(view.state.mapId)} T${view.state.mapTier} • LV ${view.state.player.level}`
       : 'IN RUN';
     header.append(title, stageBadge);
 
@@ -1803,16 +2021,36 @@ export class MenusOverlay {
     const nav = document.createElement('div');
     nav.className = 'kb-title-nav';
     nav.style.width = '100%';
-    const resumeBtn = this.makeButton('RESUME', 'pause-resume', 'kb-btn--primary', () =>
-      this.callbacks.onResume(),
+    const resumeBtn = this.makeButton(
+      'RESUME',
+      'pause-resume',
+      'kb-btn--primary',
+      () => this.callbacks.onResume(),
+      'play',
     );
     resumeBtn.setAttribute('data-kb-focus-default', 'true');
     nav.append(
       resumeBtn,
-      this.makeButton('OPTIONS', 'pause-options', '', () => this.callbacks.onOpenOptions()),
-      this.makeButton('RESTART RUN', 'pause-restart', '', () => this.callbacks.onRestartRun()),
-      this.makeButton('ABANDON TO TITLE', 'pause-abandon', 'kb-btn--danger', () =>
-        this.callbacks.onAbandonRun(),
+      this.makeButton(
+        'OPTIONS',
+        'pause-options',
+        '',
+        () => this.callbacks.onOpenOptions(),
+        'settings',
+      ),
+      this.makeButton(
+        'RESTART RUN',
+        'pause-restart',
+        '',
+        () => this.callbacks.onRestartRun(),
+        'refresh',
+      ),
+      this.makeButton(
+        'ABANDON TO TITLE',
+        'pause-abandon',
+        'kb-btn--danger',
+        () => this.callbacks.onAbandonRun(),
+        'back',
       ),
     );
     body.appendChild(nav);
@@ -1833,12 +2071,20 @@ export class MenusOverlay {
     header.className = 'kb-modal-header';
     const title = document.createElement('h2');
     title.className = 'kb-modal-title';
-    title.textContent = 'OPTIONS & CALIBRATION';
+    title.append(
+      createSvgIcon(getUiIconSvg('settings', 20), 'kb-title-icon'),
+      document.createTextNode('OPTIONS & CALIBRATION'),
+    );
     const gpBadge = document.createElement('span');
     gpBadge.className = 'kb-badge kb-badge--cyan';
-    gpBadge.textContent = view.gamepadConnected
-      ? `CONNECTED: ${profileLabel(view.gamepadProfile)}`
-      : 'NO GAMEPAD DETECTED';
+    gpBadge.append(
+      createSvgIcon(getUiIconSvg('gamepad', 13), 'kb-badge-icon'),
+      document.createTextNode(
+        view.gamepadConnected
+          ? `CONNECTED: ${profileLabel(view.gamepadProfile)}`
+          : 'NO GAMEPAD',
+      ),
+    );
     header.append(title, gpBadge);
 
     const body = document.createElement('div');
@@ -2237,11 +2483,14 @@ export class MenusOverlay {
     header.className = 'kb-modal-header';
     const title = document.createElement('h2');
     title.className = isVictory ? 'kb-modal-title' : 'kb-modal-title kb-modal-title--crimson';
-    title.textContent = isVictory ? 'VICTORY!' : 'GAME OVER — BONKED';
+    title.append(
+      createSvgIcon(getUiIconSvg(isVictory ? 'crown' : 'skull', 22), 'kb-title-icon'),
+      document.createTextNode(isVictory ? 'VICTORY!' : 'GAME OVER — BONKED'),
+    );
     const charBadge = document.createElement('span');
     charBadge.className = 'kb-badge';
     charBadge.textContent = state
-      ? `${state.characterId.toUpperCase()} • ${state.mapId.toUpperCase()} T${state.mapTier}`
+      ? `${state.characterId.toUpperCase()} • ${shortMapName(state.mapId)} T${state.mapTier}`
       : 'RUN SUMMARY';
     header.append(title, charBadge);
 
@@ -2282,6 +2531,7 @@ export class MenusOverlay {
       );
       for (const slot of sorted) {
         const def = view.catalog.weapons.find((w) => w.id === slot.weaponId);
+        const elemCol = ELEMENT_COLORS[def?.element ?? 'Physical'] ?? '#fbbf24';
         const pct = Math.min(100, (Math.max(0, slot.totalDamage) / totalDmg) * 100);
         const row = document.createElement('div');
         row.className = 'kb-dmg-row';
@@ -2289,8 +2539,13 @@ export class MenusOverlay {
         const head = document.createElement('div');
         head.className = 'kb-dmg-row-head';
         const left = document.createElement('span');
-        left.textContent = `${def?.displayName ?? slot.weaponId} (LV ${slot.level})`;
+        left.className = 'kb-dmg-weapon-name';
+        left.append(
+          createSvgIcon(getWeaponIconSvg(slot.weaponId, elemCol, 16), 'kb-inline-icon'),
+          document.createTextNode(`${def?.displayName ?? slot.weaponId} (LV ${slot.level})`),
+        );
         const right = document.createElement('span');
+        right.className = 'kb-dmg-weapon-val';
         right.textContent = `${formatDmg(slot.totalDamage)} DMG (${pct.toFixed(0)}%) • ${slot.kills} KILLS`;
         head.append(left, right);
 
@@ -2315,13 +2570,23 @@ export class MenusOverlay {
 
     const footer = document.createElement('div');
     footer.className = 'kb-modal-footer';
-    const replayBtn = this.makeButton('PLAY AGAIN', 'summary-replay', 'kb-btn--primary', () =>
-      this.callbacks.onRestartRun(),
+    const replayBtn = this.makeButton(
+      'PLAY AGAIN',
+      'summary-replay',
+      'kb-btn--primary',
+      () => this.callbacks.onRestartRun(),
+      'play',
     );
     replayBtn.setAttribute('data-kb-focus-default', 'true');
     footer.append(
-      this.makeButton('TITLE SCREEN', 'summary-title', '', () => this.callbacks.onBackToTitle()),
-      this.makeButton('META SHOP', 'summary-shop', '', () => this.callbacks.onOpenShop()),
+      this.makeButton(
+        'TITLE SCREEN',
+        'summary-title',
+        '',
+        () => this.callbacks.onBackToTitle(),
+        'back',
+      ),
+      this.makeButton('META SHOP', 'summary-shop', '', () => this.callbacks.onOpenShop(), 'shop'),
       replayBtn,
     );
 
@@ -2347,11 +2612,18 @@ export class MenusOverlay {
     focusId: string,
     extraClass: string,
     onClick: () => void,
+    icon?: UiIconName,
   ): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = extraClass ? `kb-btn ${extraClass}` : 'kb-btn';
-    btn.textContent = text;
+    if (icon) {
+      btn.append(createSvgIcon(getUiIconSvg(icon, 15), 'kb-btn-icon'));
+    }
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'kb-btn-label';
+    labelSpan.textContent = text;
+    btn.appendChild(labelSpan);
     btn.setAttribute('data-kb-focus', 'true');
     btn.setAttribute('data-kb-focus-id', focusId);
     btn.addEventListener('click', onClick);

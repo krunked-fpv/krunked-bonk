@@ -26,19 +26,21 @@ import type {
 import type { AssetRegistry } from '../assets/AssetRegistry';
 import type { ProceduralTextureId, PropKind } from '../assets/ProceduralLowPolyPack';
 import {
+  createMkTerrainMaterial,
   createMkToonMaterial,
   createOutlineMaterial,
   createSmoothOutlineGeometry,
+  getSoftContactShadowTexture,
   setMkToonTexture,
 } from './toonShader';
 
-const GRASS_CAPACITY = 8500;
+const GRASS_CAPACITY = 9000;
 const GRASS_COUNTS: Record<GrassQuality, number> = {
-  low: 1400,
-  med: 4200,
+  low: 1600,
+  med: 4600,
   high: GRASS_CAPACITY,
 };
-const SANDSTORM_MOTE_COUNT = 180;
+const AMBIENT_MOTE_COUNT = 160;
 const DESERT_TORNADO_COUNT = 3;
 
 function createLocalRng(seed: number): () => number {
@@ -51,9 +53,14 @@ function createLocalRng(seed: number): () => number {
   };
 }
 
+/**
+ * Gracefully arched 5-blade 2-segment stylized foliage tuft (9 vertices per blade)
+ * so grass curves softly in the breeze and blends seamlessly at the ground root.
+ */
 function createGrassTuftGeometry(): THREE.BufferGeometry {
-  const bladeCount = 4;
-  const vertsPerBlade = 3;
+  const bladeCount = 5;
+  const trisPerBlade = 3; // lower quad (2 tris) + curved tip (1 tri)
+  const vertsPerBlade = trisPerBlade * 3;
   const totalVerts = bladeCount * vertsPerBlade;
 
   const positions = new Float32Array(totalVerts * 3);
@@ -61,62 +68,71 @@ function createGrassTuftGeometry(): THREE.BufferGeometry {
   const uvs = new Float32Array(totalVerts * 2);
   const colors = new Float32Array(totalVerts * 3);
 
-  const rootCol = new THREE.Color(0x888888);
+  const rootCol = new THREE.Color(0x9ea89e);
+  const midCol = new THREE.Color(0xd8e0d8);
   const tipCol = new THREE.Color(0xffffff);
 
   let vi = 0;
+  const pushV = (x: number, y: number, z: number, u: number, v: number, c: THREE.Color) => {
+    positions[vi * 3] = x;
+    positions[vi * 3 + 1] = y;
+    positions[vi * 3 + 2] = z;
+    normals[vi * 3] = 0;
+    normals[vi * 3 + 1] = 1;
+    normals[vi * 3 + 2] = 0;
+    uvs[vi * 2] = u;
+    uvs[vi * 2 + 1] = v;
+    colors[vi * 3] = c.r;
+    colors[vi * 3 + 1] = c.g;
+    colors[vi * 3 + 2] = c.b;
+    vi++;
+  };
+
   for (let b = 0; b < bladeCount; b++) {
-    const angle = (b / bladeCount) * Math.PI + (b % 2 === 1 ? 0.18 : 0);
+    const angle = (b / bladeCount) * Math.PI * 2 + (b % 2 === 1 ? 0.28 : 0);
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    const halfW = 0.2;
-    const h = 0.68 + (b % 2) * 0.22 + (b === 3 ? 0.08 : 0);
-    const lean = 0.16;
+    const halfW = 0.145;
+    const midW = 0.085;
+    const h = 0.56 + (b % 3) * 0.14;
+    const hMid = h * 0.56;
+    const leanMid = 0.09;
+    const leanTip = 0.28;
 
-    const bx = cos * 0.1;
-    const bz = sin * 0.1;
+    const bx = cos * 0.14;
+    const bz = sin * 0.14;
+    // Perpendicular blade width axis
+    const px = -sin;
+    const pz = cos;
 
-    // Left root
-    positions[vi * 3] = bx - cos * halfW;
-    positions[vi * 3 + 1] = 0;
-    positions[vi * 3 + 2] = bz - sin * halfW;
-    normals[vi * 3] = 0;
-    normals[vi * 3 + 1] = 1;
-    normals[vi * 3 + 2] = 0;
-    uvs[vi * 2] = 0;
-    uvs[vi * 2 + 1] = 0;
-    colors[vi * 3] = rootCol.r;
-    colors[vi * 3 + 1] = rootCol.g;
-    colors[vi * 3 + 2] = rootCol.b;
-    vi++;
+    const rLx = bx - px * halfW;
+    const rLz = bz - pz * halfW;
+    const rRx = bx + px * halfW;
+    const rRz = bz + pz * halfW;
 
-    // Right root
-    positions[vi * 3] = bx + cos * halfW;
-    positions[vi * 3 + 1] = 0;
-    positions[vi * 3 + 2] = bz + sin * halfW;
-    normals[vi * 3] = 0;
-    normals[vi * 3 + 1] = 1;
-    normals[vi * 3 + 2] = 0;
-    uvs[vi * 2] = 1;
-    uvs[vi * 2 + 1] = 0;
-    colors[vi * 3] = rootCol.r;
-    colors[vi * 3 + 1] = rootCol.g;
-    colors[vi * 3 + 2] = rootCol.b;
-    vi++;
+    const mCx = bx + cos * leanMid;
+    const mCz = bz + sin * leanMid;
+    const mLx = mCx - px * midW;
+    const mLz = mCz - pz * midW;
+    const mRx = mCx + px * midW;
+    const mRz = mCz + pz * midW;
 
-    // Sunlit tip
-    positions[vi * 3] = bx - sin * lean;
-    positions[vi * 3 + 1] = h;
-    positions[vi * 3 + 2] = bz + cos * lean;
-    normals[vi * 3] = 0;
-    normals[vi * 3 + 1] = 1;
-    normals[vi * 3 + 2] = 0;
-    uvs[vi * 2] = 0.5;
-    uvs[vi * 2 + 1] = 1;
-    colors[vi * 3] = tipCol.r;
-    colors[vi * 3 + 1] = tipCol.g;
-    colors[vi * 3 + 2] = tipCol.b;
-    vi++;
+    const tx = bx + cos * leanTip;
+    const tz = bz + sin * leanTip;
+
+    // Lower quad (2 triangles)
+    pushV(rLx, 0, rLz, 0, 0, rootCol);
+    pushV(rRx, 0, rRz, 1, 0, rootCol);
+    pushV(mLx, hMid, mLz, 0.15, 0.55, midCol);
+
+    pushV(rRx, 0, rRz, 1, 0, rootCol);
+    pushV(mRx, hMid, mRz, 0.85, 0.55, midCol);
+    pushV(mLx, hMid, mLz, 0.15, 0.55, midCol);
+
+    // Arched sunlit tip (1 triangle)
+    pushV(mLx, hMid, mLz, 0.15, 0.55, midCol);
+    pushV(mRx, hMid, mRz, 0.85, 0.55, midCol);
+    pushV(tx, h, tz, 0.5, 1.0, tipCol);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -331,9 +347,9 @@ export class TerrainMeshBuilder {
   private magmaRimMat: THREE.ShaderMaterial | null = null;
   private jumpPadRings: THREE.Mesh[] = [];
 
-  // Desert animated Sandstorm dust motes + towering Tornado cyclone funnels (ZERO per-frame allocs!)
-  private sandstormMesh: THREE.InstancedMesh | null = null;
-  private readonly sandMoteSeed = new Float32Array(SANDSTORM_MOTE_COUNT * 4);
+  // Ambient floating biome particles (Forest pollen/fireflies/embers, Desert dust, Graveyard wisps, Citadel sparks)
+  private ambientMotesMesh: THREE.InstancedMesh | null = null;
+  private readonly ambientMoteSeed = new Float32Array(AMBIENT_MOTE_COUNT * 4);
   private readonly desertTornadoes: DesertTornadoRig[] = [];
   private currentSeed = 1;
   private currentGrassMaxPlaced = 0;
@@ -352,9 +368,9 @@ export class TerrainMeshBuilder {
   private builtPadsLen = -1;
   private builtFirstPadId = -1;
 
-  // Contact shadow under player (pre-allocated)
+  // Soft radial-gradient contact shadow under player (pre-allocated)
   private readonly contactShadow: THREE.Mesh;
-  private readonly contactShadowGeo: THREE.CircleGeometry;
+  private readonly contactShadowGeo: THREE.PlaneGeometry;
   private readonly contactShadowMat: THREE.MeshBasicMaterial;
 
   // Scratch math objects for ZERO-GC updates
@@ -376,12 +392,12 @@ export class TerrainMeshBuilder {
     this.rootGroup.name = 'TerrainRoot';
     this.rootGroup.add(this.staticGroup, this.featuresGroup);
 
-    this.contactShadowGeo = new THREE.CircleGeometry(0.95, 16);
+    this.contactShadowGeo = new THREE.PlaneGeometry(2.35, 2.35);
     this.contactShadowGeo.rotateX(-Math.PI * 0.5);
     this.contactShadowMat = new THREE.MeshBasicMaterial({
-      color: 0x0b1626,
+      map: getSoftContactShadowTexture(),
       transparent: true,
-      opacity: 0.44,
+      opacity: 0.72,
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -2,
@@ -418,10 +434,8 @@ export class TerrainMeshBuilder {
     this.buildBoundaryEnvironment(mapId, terrain, palette, rng);
     this.buildProceduralProps(mapId, mapTier, terrain, rng);
     this.buildWindGrass(terrain, palette, rng, grassQuality);
-
-    if (mapId === 'Desert') {
-      this.buildDesertWeather(terrain, palette, rng);
-    }
+    this.buildBiomeWildflowers(mapId, mapTier, terrain, rng);
+    this.buildAmbientAtmosphere(mapId, mapTier, terrain, palette, rng);
   }
 
   public setGrassQuality(quality: GrassQuality): void {
@@ -461,6 +475,11 @@ export class TerrainMeshBuilder {
     if (this.terrainMat) {
       const pal = getTerrainPalette(this.currentMapId, this.currentMapTier);
       setMkToonTexture(this.terrainMat, this.assets.getTexture(pal.detailTexture));
+      const uCliff = this.terrainMat.uniforms.uCliffMap;
+      const uHasCliff = this.terrainMat.uniforms.uHasCliffMap;
+      const cliffTex = this.assets.getTexture(pal.cliffTexture);
+      if (uCliff) uCliff.value = cliffTex;
+      if (uHasCliff) uHasCliff.value = cliffTex ? 1.0 : 0.0;
     }
     if (this.railMat) {
       setMkToonTexture(this.railMat, this.assets.getTexture('rail_energy'));
@@ -518,33 +537,45 @@ export class TerrainMeshBuilder {
       if (uInt) uInt.value = 0.88 + Math.sin(timeSec * 2.6) * 0.18;
     }
 
-    // 3. Desert Sandstorm drifting dust motes (localized around player for rich density!)
-    if (this.sandstormMesh) {
-      const span = 120;
+    // 3. All-Biome Ambient Atmospheric Particles (pollen/fireflies/embers/sand/soul-wisps!)
+    if (this.ambientMotesMesh) {
+      const span = 104;
       const half = span * 0.5;
-      const windX = timeSec * 16.5;
-      const windZ = timeSec * 7.2;
-      for (let i = 0; i < SANDSTORM_MOTE_COUNT; i++) {
-        const b = i * 4;
-        const ox = this.sandMoteSeed[b]!;
-        const oy = this.sandMoteSeed[b + 1]!;
-        const oz = this.sandMoteSeed[b + 2]!;
-        const sc = this.sandMoteSeed[b + 3]!;
+      const isDesert = this.currentMapId === 'Desert';
+      const isRising =
+        this.currentMapId === 'FinalBossMap' ||
+        this.currentMapId === 'Graveyard' ||
+        (this.currentMapId === 'Forest' && this.currentMapTier === 3);
+      const windX = isDesert ? timeSec * 15.5 : isRising ? timeSec * 1.6 : timeSec * 2.4;
+      const windZ = isDesert ? timeSec * 6.8 : isRising ? timeSec * 0.9 : timeSec * 1.4;
+      const riseRate = isRising ? 2.2 : 0.35;
 
-        // Wrap deterministically in [player - half, player + half]
-        let wx = ((ox + windX - playerX + half) % span + span) % span - half + playerX;
-        let wz = ((oz + windZ - playerZ + half) % span + span) % span - half + playerZ;
+      for (let i = 0; i < AMBIENT_MOTE_COUNT; i++) {
+        const b = i * 4;
+        const ox = this.ambientMoteSeed[b]!;
+        const oy = this.ambientMoteSeed[b + 1]!;
+        const oz = this.ambientMoteSeed[b + 2]!;
+        const sc = this.ambientMoteSeed[b + 3]!;
+
+        const wx = (((ox + windX - playerX + half) % span) + span) % span - half + playerX;
+        const wz = (((oz + windZ - playerZ + half) % span) + span) % span - half + playerZ;
         const groundY = this.currentTerrain ? this.currentTerrain.sample(wx, wz).height : 0;
-        const wy = groundY + 0.8 + ((oy + Math.sin(timeSec * 2.2 + i) * 1.4 + 14) % 14);
+        const yCycle = (((oy + timeSec * riseRate) % 13.0) + 13.0) % 13.0;
+        const wy = groundY + 0.65 + yCycle + Math.sin(timeSec * 2.1 + i * 0.7) * 0.75;
 
         this._pos.set(wx, wy, wz);
-        this._euler.set(timeSec * 3.1 + i, timeSec * 4.2 + i, 0);
+        this._euler.set(timeSec * 2.2 + i, timeSec * 3.1 + i, 0);
         this._quat.setFromEuler(this._euler);
-        this._scale.set(sc * 1.6, sc * 0.7, sc * 0.7);
+        const pulse = isDesert ? 1.0 : 0.72 + Math.sin(timeSec * 4.5 + i * 1.3) * 0.32;
+        if (isDesert) {
+          this._scale.set(sc * 1.65, sc * 0.65, sc * 0.65);
+        } else {
+          this._scale.setScalar(sc * pulse);
+        }
         this._mat.compose(this._pos, this._quat, this._scale);
-        this.sandstormMesh.setMatrixAt(i, this._mat);
+        this.ambientMotesMesh.setMatrixAt(i, this._mat);
       }
-      this.sandstormMesh.instanceMatrix.needsUpdate = true;
+      this.ambientMotesMesh.instanceMatrix.needsUpdate = true;
     }
 
     // 4. Towering spinning Desert Tornado cyclone funnels roaming across the dunes!
@@ -596,9 +627,9 @@ export class TerrainMeshBuilder {
     this.contactShadow.quaternion.copy(this._quat);
 
     const t = Math.min(1, heightAboveGround / 12);
-    const scale = 1.0 - t * 0.55;
+    const scale = 1.0 - t * 0.52;
     this.contactShadow.scale.setScalar(scale);
-    this.contactShadowMat.opacity = 0.44 * (1.0 - t * 0.78);
+    this.contactShadowMat.opacity = 0.72 * (1.0 - t * 0.76);
   }
 
   // ---- Internal Builders ----
@@ -826,14 +857,29 @@ export class TerrainMeshBuilder {
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
 
-    const mat = createMkToonMaterial({
-      color: 0xffffff,
-      map: this.assets.getTexture(palette.detailTexture),
-      mapStrength: mapId === 'FinalBossMap' ? 0.52 : 0.42,
-      vertexColors: true,
-      rimStrength: mapId === 'FinalBossMap' ? 0.22 : 0.14,
-      rimColor: mapId === 'FinalBossMap' ? 0xffc83b : 0xb8f2ff,
-      flatShading: true,
+    const biomeMode: 0 | 1 | 2 | 3 =
+      mapId === 'Desert'
+        ? 1
+        : mapId === 'Graveyard'
+          ? 2
+          : mapId === 'FinalBossMap'
+            ? 3
+            : 0;
+
+    const mat = createMkTerrainMaterial({
+      groundMap: this.assets.getTexture(palette.detailTexture),
+      cliffMap: this.assets.getTexture(palette.cliffTexture),
+      rimStrength: mapId === 'FinalBossMap' ? 0.24 : 0.16,
+      rimColor:
+        mapId === 'FinalBossMap'
+          ? 0xffc83b
+          : mapId === 'Desert'
+            ? 0xffe4a3
+            : mapId === 'Graveyard'
+              ? 0xbba3f5
+              : 0xc2f7ff,
+      biomeMode,
+      arenaRadius: terrain.arenaRadius,
     });
     this.terrainMat = mat;
 
@@ -955,6 +1001,11 @@ export class TerrainMeshBuilder {
     const spawn = terrain.getSpawnPoint();
     const maxR = Math.max(40, terrain.arenaRadius - 10);
 
+    const shadowTransforms: THREE.Matrix4[] = [];
+    const shadowDummy = new THREE.Object3D();
+    const shadowNorm = new THREE.Vector3();
+    const shadowUp = new THREE.Vector3(0, 1, 0);
+
     const placeInstancedProp = (
       propKind: PropKind,
       targetCount: number,
@@ -962,6 +1013,7 @@ export class TerrainMeshBuilder {
       scaleMin: number,
       scaleMax: number,
       tintHex = 0xffffff,
+      shadowRadius = 2.4,
     ) => {
       const pair = this.assets.builtIn.getPropGeometryPair(propKind);
       const transforms: THREE.Matrix4[] = [];
@@ -988,6 +1040,20 @@ export class TerrainMeshBuilder {
         dummy.scale.set(sc, sc * (0.9 + rng() * 0.28), sc);
         dummy.updateMatrix();
         transforms.push(dummy.matrix.clone());
+
+        // Grounded directional contact shadow slightly offset away from the sun!
+        if (shadowRadius > 0) {
+          const sx = x - 0.55 * sc;
+          const sz = z - 0.38 * sc;
+          const sSample = terrain.sample(sx, sz);
+          shadowNorm.set(sSample.normal.x, sSample.normal.y, sSample.normal.z).normalize();
+          shadowDummy.position.set(sx, sSample.height + 0.055, sz);
+          shadowDummy.quaternion.setFromUnitVectors(shadowUp, shadowNorm);
+          const sRad = shadowRadius * sc;
+          shadowDummy.scale.set(sRad, 1, sRad);
+          shadowDummy.updateMatrix();
+          shadowTransforms.push(shadowDummy.matrix.clone());
+        }
       }
 
       if (transforms.length === 0) return;
@@ -1022,26 +1088,50 @@ export class TerrainMeshBuilder {
     if (mapId === 'Desert') {
       const rockTint = mapTier === 2 ? 0x99bdf5 : mapTier === 3 ? 0xe08270 : 0xffffff;
       const cactusTint = mapTier === 2 ? 0x8cc8f5 : mapTier === 3 ? 0xd98f70 : 0xffffff;
-      placeInstancedProp('cactus', 84, 20, 0.85, 1.5, cactusTint);
-      placeInstancedProp('sandstone_obelisk', 28, 26, 0.9, 1.45, rockTint);
-      placeInstancedProp('desert_boulder', 66, 20, 0.85, 1.85, rockTint);
+      placeInstancedProp('cactus', 84, 20, 0.85, 1.5, cactusTint, 2.1);
+      placeInstancedProp('sandstone_obelisk', 28, 26, 0.9, 1.45, rockTint, 3.2);
+      placeInstancedProp('desert_boulder', 66, 20, 0.85, 1.85, rockTint, 2.8);
     } else if (mapId === 'Graveyard') {
-      placeInstancedProp('tombstone', 110, 16, 0.85, 1.38);
-      placeInstancedProp('dead_tree', 56, 22, 0.9, 1.45);
-      placeInstancedProp('iron_fence', 44, 22, 0.95, 1.25);
-      placeInstancedProp('crypt_arch', 10, 34, 1.0, 1.3);
+      placeInstancedProp('tombstone', 110, 16, 0.85, 1.38, 0xffffff, 1.9);
+      placeInstancedProp('dead_tree', 56, 22, 0.9, 1.45, 0xffffff, 3.6);
+      placeInstancedProp('iron_fence', 44, 22, 0.95, 1.25, 0xffffff, 1.8);
+      placeInstancedProp('crypt_arch', 10, 34, 1.0, 1.3, 0xffffff, 4.4);
     } else if (mapId === 'FinalBossMap') {
-      placeInstancedProp('citadel_pillar', 12, 34, 0.72, 0.95);
+      placeInstancedProp('citadel_pillar', 12, 34, 0.72, 0.95, 0xffffff, 3.4);
     } else {
       // Forest T1 (emerald), T2 (twilight indigo-teal), T3 (cursed crimson-ash)
       const treeTint = mapTier === 2 ? 0x9fa8f5 : mapTier === 3 ? 0xe68875 : 0xffffff;
-      placeInstancedProp('pine', 115, 22, 0.85, 1.48, treeTint);
-      placeInstancedProp('oak', 68, 24, 0.9, 1.42, treeTint);
+      placeInstancedProp('pine', 115, 22, 0.85, 1.48, treeTint, 4.4);
+      placeInstancedProp('oak', 68, 24, 0.9, 1.42, treeTint, 5.2);
       if (mapTier === 3) {
-        placeInstancedProp('dead_tree', 32, 24, 0.9, 1.35, 0xbfa39e);
+        placeInstancedProp('dead_tree', 32, 24, 0.9, 1.35, 0xbfa39e, 3.6);
       }
-      placeInstancedProp('boulder', 64, 18, 0.75, 1.55, treeTint);
-      placeInstancedProp('ruin_pillar', 18, 32, 0.95, 1.35, treeTint);
+      placeInstancedProp('boulder', 64, 18, 0.75, 1.55, treeTint, 2.7);
+      placeInstancedProp('ruin_pillar', 18, 32, 0.95, 1.35, treeTint, 3.2);
+    }
+
+    // Batch ALL static prop shadows into a SINGLE ultra-fast InstancedMesh draw call!
+    if (shadowTransforms.length > 0) {
+      const shGeo = new THREE.PlaneGeometry(1.0, 1.0);
+      shGeo.rotateX(-Math.PI * 0.5);
+      const shMat = new THREE.MeshBasicMaterial({
+        map: getSoftContactShadowTexture(),
+        transparent: true,
+        opacity: mapId === 'Graveyard' || mapId === 'FinalBossMap' ? 0.52 : 0.62,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      });
+      const shMesh = new THREE.InstancedMesh(shGeo, shMat, shadowTransforms.length);
+      for (let i = 0; i < shadowTransforms.length; i++) {
+        shMesh.setMatrixAt(i, shadowTransforms[i]!);
+      }
+      shMesh.instanceMatrix.needsUpdate = true;
+      shMesh.frustumCulled = false;
+      shMesh.renderOrder = 1;
+      this.staticGroup.add(shMesh);
+      this.disposableGeometries.push(shGeo);
+      this.disposableMaterials.push(shMat);
     }
   }
 
@@ -1109,35 +1199,123 @@ export class TerrainMeshBuilder {
   }
 
   /**
-   * Builds Desert Sandstorm floating dust motes & towering spinning Tornado cyclone funnels!
+   * Scatters vibrant stylized biome wildflowers, mushrooms, desert crystals, or citadel embers
+   * in a single instanced draw call for rich foreground ground detail.
    */
-  private buildDesertWeather(
+  private buildBiomeWildflowers(
+    mapId: MapId,
+    mapTier: MapTier,
+    terrain: ITerrainSampler,
+    rng: () => number,
+  ): void {
+    const count = mapId === 'FinalBossMap' ? 90 : mapId === 'Desert' ? 140 : 320;
+    const geo = new THREE.OctahedronGeometry(0.24, 0);
+    geo.scale(1.15, 0.72, 1.15);
+    geo.translate(0, 0.24, 0);
+
+    const isGlowing =
+      mapId === 'FinalBossMap' ||
+      mapId === 'Graveyard' ||
+      (mapId === 'Forest' && mapTier >= 2);
+    const mat = createMkToonMaterial({
+      color: 0xffffff,
+      emissive: isGlowing ? 0x553366 : 0x111108,
+      emissiveIntensity: isGlowing ? 0.45 : 0.08,
+      rimStrength: 0.42,
+      windStrength: mapId === 'FinalBossMap' ? 0.0 : 0.14,
+    });
+
+    const colorsByBiome: number[] =
+      mapId === 'Desert'
+        ? [0xffe89e, 0xff9f43, 0x73cf57, 0xd8b4fe]
+        : mapId === 'Graveyard'
+          ? [0xc084fc, 0x70f5ff, 0x9b5de5, 0xf4e8ff]
+          : mapId === 'FinalBossMap'
+            ? [0xffc83b, 0xff5a1f, 0xd946ef]
+            : mapTier === 2
+              ? [0x70f5ff, 0xc084fc, 0xffe45e, 0xa6ffcb]
+              : mapTier === 3
+                ? [0xff6b3d, 0xffd23f, 0xff3b5c]
+                : [0xffe85c, 0xffffff, 0x70d6ff, 0xff8fab, 0xffb703];
+
+    const inst = new THREE.InstancedMesh(geo, mat, count);
+    const dummy = new THREE.Object3D();
+    const col = new THREE.Color();
+    const maxR = Math.max(30, terrain.arenaRadius - 6);
+    let placed = 0;
+
+    for (let attempt = 0; attempt < count * 4 && placed < count; attempt++) {
+      const a = rng() * Math.PI * 2;
+      const r = 4 + Math.sqrt(rng()) * (maxR - 4);
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const s = terrain.sample(x, z);
+      if (!s.inBounds || s.slopeAngleRad > 0.34) continue;
+
+      const sc = 0.65 + rng() * 0.85;
+      dummy.position.set(x, s.height - 0.02, z);
+      dummy.rotation.set((rng() - 0.5) * 0.25, rng() * Math.PI * 2, (rng() - 0.5) * 0.25);
+      dummy.scale.set(sc, sc * (0.8 + rng() * 0.5), sc);
+      dummy.updateMatrix();
+      inst.setMatrixAt(placed, dummy.matrix);
+
+      col.setHex(colorsByBiome[Math.floor(rng() * colorsByBiome.length)]!);
+      inst.setColorAt(placed, col);
+      placed++;
+    }
+
+    inst.count = placed;
+    inst.visible = placed > 0;
+    inst.instanceMatrix.needsUpdate = true;
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    inst.frustumCulled = false;
+
+    this.staticGroup.add(inst);
+    this.disposableGeometries.push(geo);
+    this.disposableMaterials.push(mat);
+  }
+
+  /**
+   * Builds ambient floating atmospheric particles across ALL 4 biomes
+   * + towering spinning Desert Tornado cyclone funnels!
+   */
+  private buildAmbientAtmosphere(
+    mapId: MapId,
+    mapTier: MapTier,
     terrain: ITerrainSampler,
     palette: TerrainColorPalette,
     rng: () => number,
   ): void {
-    // 1. Floating Sandstorm dust particles
-    const moteGeo = new THREE.OctahedronGeometry(0.16, 0);
+    // 1. All-biome floating ambient motes (pollen, fireflies, embers, sand dust, soul wisps)
+    const isGlowingMote =
+      mapId === 'Graveyard' ||
+      mapId === 'FinalBossMap' ||
+      (mapId === 'Forest' && mapTier >= 2);
+    const moteGeo = new THREE.OctahedronGeometry(mapId === 'Desert' ? 0.16 : 0.12, 0);
     const moteMat = createMkToonMaterial({
       color: palette.dustColor,
       emissive: palette.dustColor,
-      emissiveIntensity: 0.35,
+      emissiveIntensity: isGlowingMote ? 1.15 : 0.45,
       transparent: true,
-      opacity: 0.72,
+      opacity: mapId === 'Desert' ? 0.68 : isGlowingMote ? 0.82 : 0.62,
+      blending: isGlowingMote ? THREE.AdditiveBlending : THREE.NormalBlending,
+      depthWrite: false,
     });
-    const moteInst = new THREE.InstancedMesh(moteGeo, moteMat, SANDSTORM_MOTE_COUNT);
+    const moteInst = new THREE.InstancedMesh(moteGeo, moteMat, AMBIENT_MOTE_COUNT);
     moteInst.frustumCulled = false;
-    for (let i = 0; i < SANDSTORM_MOTE_COUNT; i++) {
+    for (let i = 0; i < AMBIENT_MOTE_COUNT; i++) {
       const b = i * 4;
-      this.sandMoteSeed[b] = (rng() - 0.5) * 120;
-      this.sandMoteSeed[b + 1] = rng() * 14;
-      this.sandMoteSeed[b + 2] = (rng() - 0.5) * 120;
-      this.sandMoteSeed[b + 3] = 0.55 + rng() * 0.95;
+      this.ambientMoteSeed[b] = (rng() - 0.5) * 104;
+      this.ambientMoteSeed[b + 1] = rng() * 13;
+      this.ambientMoteSeed[b + 2] = (rng() - 0.5) * 104;
+      this.ambientMoteSeed[b + 3] = 0.55 + rng() * 0.9;
     }
-    this.sandstormMesh = moteInst;
+    this.ambientMotesMesh = moteInst;
     this.staticGroup.add(moteInst);
     this.disposableGeometries.push(moteGeo);
     this.disposableMaterials.push(moteMat);
+
+    if (mapId !== 'Desert') return;
 
     // 2. Towering Spinning Desert Tornado Funnels!
     const funnelMat = createMkToonMaterial({
@@ -1145,7 +1323,7 @@ export class TerrainMeshBuilder {
       emissive: palette.dustColor,
       emissiveIntensity: 0.28,
       transparent: true,
-      opacity: 0.58,
+      opacity: 0.52,
       side: THREE.DoubleSide,
       depthWrite: false,
       flatShading: true,
@@ -1155,7 +1333,7 @@ export class TerrainMeshBuilder {
       emissive: palette.dustColor,
       emissiveIntensity: 0.42,
       transparent: true,
-      opacity: 0.72,
+      opacity: 0.68,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -1335,7 +1513,7 @@ export class TerrainMeshBuilder {
     this.grassMesh = null;
     this.grassMat = null;
     this.magmaRimMat = null;
-    this.sandstormMesh = null;
+    this.ambientMotesMesh = null;
     this.desertTornadoes.length = 0;
     this.floorIsLavaActive = false;
   }

@@ -1,4 +1,5 @@
 import type { GamePhase } from '../contracts';
+import { getUiIconSvg, type UiIconName } from '../ui/UiIcons';
 
 export interface TouchInputSnapshot {
   moveX: number;
@@ -10,14 +11,15 @@ export interface TouchInputSnapshot {
   crouchSlide: boolean;
   fireHeld: boolean;
   interactPressed: boolean;
+  cameraTogglePressed: boolean;
   mapTogglePressed: boolean;
   pausePressed: boolean;
   active: boolean;
 }
 
-const STICK_MAX_RADIUS_PX = 52;
+const STICK_MAX_RADIUS_PX = 48;
 const STICK_DEADZONE = 0.12;
-const TOUCH_LOOK_RAD_PER_PX = 0.0046;
+const TOUCH_LOOK_RAD_PER_PX = 0.0048;
 
 export class TouchOverlay {
   private host: HTMLElement | null = null;
@@ -32,6 +34,7 @@ export class TouchOverlay {
   private interactLabelEl: HTMLSpanElement | null = null;
   private fireBtn: HTMLButtonElement | null = null;
   private mapBtn: HTMLButtonElement | null = null;
+  private camBtn: HTMLButtonElement | null = null;
   private pauseBtn: HTMLButtonElement | null = null;
 
   private touchActive = false;
@@ -62,6 +65,7 @@ export class TouchOverlay {
 
   private jumpPressed = false;
   private interactPressed = false;
+  private cameraTogglePressed = false;
   private mapTogglePressed = false;
   private pausePressed = false;
 
@@ -83,6 +87,30 @@ export class TouchOverlay {
     this.invertY = Boolean(invertY);
   }
 
+  private buildTouchButton(
+    className: string,
+    attr: string,
+    icon: UiIconName,
+    label: string,
+    iconSize = 20,
+  ): { btn: HTMLButtonElement; labelEl: HTMLSpanElement } {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = className;
+    btn.setAttribute('data-kb-touch-btn', attr);
+
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'kb-touch-btn-icon';
+    iconWrap.innerHTML = getUiIconSvg(icon, iconSize);
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'kb-touch-btn-label';
+    labelEl.textContent = label;
+
+    btn.append(iconWrap, labelEl);
+    return { btn, labelEl };
+  }
+
   public mount(host: HTMLElement): void {
     if (this.attached && this.host === host) return;
     if (this.attached) this.dispose();
@@ -99,68 +127,82 @@ export class TouchOverlay {
     root.style.display = 'none';
     root.style.pointerEvents = 'none';
 
-    // Left virtual analog stick zone
+    // Left floating virtual analog stick zone
     const stickZone = document.createElement('div');
     stickZone.className = 'kb-touch-stick-zone';
     const stickBase = document.createElement('div');
     stickBase.className = 'kb-touch-control kb-touch-stick-base';
+    const stickRing = document.createElement('div');
+    stickRing.className = 'kb-touch-stick-ring';
     const stickKnob = document.createElement('div');
     stickKnob.className = 'kb-touch-stick-knob';
-    stickBase.appendChild(stickKnob);
+    stickBase.append(stickRing, stickKnob);
     stickZone.appendChild(stickBase);
 
     // Right drag-look zone
     const lookZone = document.createElement('div');
     lookZone.className = 'kb-touch-look-zone';
 
-    // Top-right compact pills
+    // Compact utility pills (MAP, CAM, PAUSE)
     const topPills = document.createElement('div');
     topPills.className = 'kb-touch-top-pills';
 
-    const mapBtn = document.createElement('button');
-    mapBtn.type = 'button';
-    mapBtn.className = 'kb-touch-control kb-touch-pill';
-    mapBtn.textContent = 'MAP';
-    mapBtn.setAttribute('data-kb-touch-btn', 'map');
+    const { btn: mapBtn } = this.buildTouchButton(
+      'kb-touch-control kb-touch-pill',
+      'map',
+      'map',
+      'MAP',
+      14,
+    );
+    const { btn: camBtn } = this.buildTouchButton(
+      'kb-touch-control kb-touch-pill',
+      'camera',
+      'camera',
+      'CAM',
+      14,
+    );
+    const { btn: pauseBtn } = this.buildTouchButton(
+      'kb-touch-control kb-touch-pill',
+      'pause',
+      'pause',
+      'PAUSE',
+      14,
+    );
 
-    const pauseBtn = document.createElement('button');
-    pauseBtn.type = 'button';
-    pauseBtn.className = 'kb-touch-control kb-touch-pill';
-    pauseBtn.textContent = 'PAUSE';
-    pauseBtn.setAttribute('data-kb-touch-btn', 'pause');
+    topPills.append(mapBtn, camBtn, pauseBtn);
 
-    topPills.append(mapBtn, pauseBtn);
-
-    // Bottom-right translucent action cluster
+    // Bottom-right ergonomic thumb-arc action cluster
     const actions = document.createElement('div');
     actions.className = 'kb-touch-actions';
 
-    const interactBtn = document.createElement('button');
-    interactBtn.type = 'button';
-    interactBtn.className = 'kb-touch-control kb-touch-btn kb-touch-btn--interact';
-    interactBtn.setAttribute('data-kb-touch-btn', 'interact');
-    const interactLabelEl = document.createElement('span');
-    interactLabelEl.className = 'kb-touch-btn-label';
-    interactLabelEl.textContent = 'USE';
-    interactBtn.appendChild(interactLabelEl);
-
-    const fireBtn = document.createElement('button');
-    fireBtn.type = 'button';
-    fireBtn.className = 'kb-touch-control kb-touch-btn kb-touch-btn--fire';
-    fireBtn.textContent = 'AIM/FIRE';
-    fireBtn.setAttribute('data-kb-touch-btn', 'fire');
-
-    const slideBtn = document.createElement('button');
-    slideBtn.type = 'button';
-    slideBtn.className = 'kb-touch-control kb-touch-btn kb-touch-btn--slide';
-    slideBtn.textContent = 'SLIDE';
-    slideBtn.setAttribute('data-kb-touch-btn', 'slide');
-
-    const jumpBtn = document.createElement('button');
-    jumpBtn.type = 'button';
-    jumpBtn.className = 'kb-touch-control kb-touch-btn kb-touch-btn--jump';
-    jumpBtn.textContent = 'JUMP';
-    jumpBtn.setAttribute('data-kb-touch-btn', 'jump');
+    const { btn: interactBtn, labelEl: interactLabelEl } = this.buildTouchButton(
+      'kb-touch-control kb-touch-btn kb-touch-btn--interact',
+      'interact',
+      'interact',
+      'USE',
+      18,
+    );
+    const { btn: fireBtn } = this.buildTouchButton(
+      'kb-touch-control kb-touch-btn kb-touch-btn--fire',
+      'fire',
+      'aim',
+      'AIM',
+      20,
+    );
+    const { btn: slideBtn } = this.buildTouchButton(
+      'kb-touch-control kb-touch-btn kb-touch-btn--slide',
+      'slide',
+      'slide',
+      'SLIDE',
+      20,
+    );
+    const { btn: jumpBtn } = this.buildTouchButton(
+      'kb-touch-control kb-touch-btn kb-touch-btn--jump',
+      'jump',
+      'jump',
+      'JUMP',
+      24,
+    );
 
     actions.append(interactBtn, fireBtn, slideBtn, jumpBtn);
 
@@ -178,6 +220,7 @@ export class TouchOverlay {
     this.interactLabelEl = interactLabelEl;
     this.fireBtn = fireBtn;
     this.mapBtn = mapBtn;
+    this.camBtn = camBtn;
     this.pauseBtn = pauseBtn;
 
     // Global real-touch activation detectors
@@ -216,6 +259,10 @@ export class TouchOverlay {
     mapBtn.addEventListener('pointerdown', this.handleMapDown);
     mapBtn.addEventListener('pointerup', this.handleTapUp);
     mapBtn.addEventListener('pointercancel', this.handleTapUp);
+
+    camBtn.addEventListener('pointerdown', this.handleCamDown);
+    camBtn.addEventListener('pointerup', this.handleTapUp);
+    camBtn.addEventListener('pointercancel', this.handleTapUp);
 
     pauseBtn.addEventListener('pointerdown', this.handlePauseDown);
     pauseBtn.addEventListener('pointerup', this.handleTapUp);
@@ -279,6 +326,7 @@ export class TouchOverlay {
       crouchSlide: isPlaying && this.slidePointers.size > 0,
       fireHeld: isPlaying && this.firePointers.size > 0,
       interactPressed: isPlaying && this.interactPressed,
+      cameraTogglePressed: isPlaying && this.cameraTogglePressed,
       mapTogglePressed: isPlaying && this.mapTogglePressed,
       pausePressed: this.touchActive && this.pausePressed,
       active: this.touchActive,
@@ -288,6 +336,7 @@ export class TouchOverlay {
     this.lookDeltaY = 0;
     this.jumpPressed = false;
     this.interactPressed = false;
+    this.cameraTogglePressed = false;
     this.mapTogglePressed = false;
     this.pausePressed = false;
 
@@ -335,6 +384,10 @@ export class TouchOverlay {
     this.mapBtn?.removeEventListener('pointerup', this.handleTapUp);
     this.mapBtn?.removeEventListener('pointercancel', this.handleTapUp);
 
+    this.camBtn?.removeEventListener('pointerdown', this.handleCamDown);
+    this.camBtn?.removeEventListener('pointerup', this.handleTapUp);
+    this.camBtn?.removeEventListener('pointercancel', this.handleTapUp);
+
     this.pauseBtn?.removeEventListener('pointerdown', this.handlePauseDown);
     this.pauseBtn?.removeEventListener('pointerup', this.handleTapUp);
     this.pauseBtn?.removeEventListener('pointercancel', this.handleTapUp);
@@ -351,6 +404,7 @@ export class TouchOverlay {
     this.interactLabelEl = null;
     this.fireBtn = null;
     this.mapBtn = null;
+    this.camBtn = null;
     this.pauseBtn = null;
     this.host = null;
     this.touchActive = false;
@@ -396,9 +450,10 @@ export class TouchOverlay {
     if (!this.interactBtn || !this.interactLabelEl) return;
     if (this.interactPrompt) {
       this.interactBtn.classList.add('has-prompt');
-      this.interactLabelEl.textContent = this.interactPrompt.length > 14
-        ? `${this.interactPrompt.slice(0, 12)}..`
-        : this.interactPrompt;
+      this.interactLabelEl.textContent =
+        this.interactPrompt.length > 10
+          ? `${this.interactPrompt.slice(0, 9)}..`
+          : this.interactPrompt;
     } else {
       this.interactBtn.classList.remove('has-prompt');
       this.interactLabelEl.textContent = 'USE';
@@ -425,6 +480,7 @@ export class TouchOverlay {
     this.fireBtn?.classList.remove('is-pressed');
     this.interactBtn?.classList.remove('is-pressed');
     this.mapBtn?.classList.remove('is-pressed');
+    this.camBtn?.classList.remove('is-pressed');
     this.pauseBtn?.classList.remove('is-pressed');
   }
 
@@ -461,7 +517,6 @@ export class TouchOverlay {
 
     const rescaled = Math.min(1, (normMag - STICK_DEADZONE) / (1 - STICK_DEADZONE));
     this.moveX = Math.cos(angle) * rescaled;
-    // Screen Y down -> negative moveZ; dragging up -> +1 forward
     this.moveZ = -Math.sin(angle) * rescaled;
   }
 
@@ -492,7 +547,7 @@ export class TouchOverlay {
 
     const rect = this.stickZone?.getBoundingClientRect();
     if (rect && this.stickBase) {
-      const pad = STICK_MAX_RADIUS_PX + 10;
+      const pad = STICK_MAX_RADIUS_PX + 8;
       const localX = Math.max(pad, Math.min(rect.width - pad, ev.clientX - rect.left));
       const localY = Math.max(pad, Math.min(rect.height - pad, ev.clientY - rect.top));
       this.stickOriginX = rect.left + localX;
@@ -592,7 +647,6 @@ export class TouchOverlay {
   private readonly handleFireMove = (ev: PointerEvent): void => {
     if (ev.pointerId !== this.fireDragPointerId) return;
     ev.preventDefault();
-    // Allow aiming while holding the AIM/FIRE button
     this.lookDeltaX += ev.clientX - this.fireLastX;
     this.lookDeltaY += ev.clientY - this.fireLastY;
     this.fireLastX = ev.clientX;
@@ -621,6 +675,13 @@ export class TouchOverlay {
     ev.preventDefault();
     this.mapTogglePressed = true;
     this.mapBtn?.classList.add('is-pressed');
+  };
+
+  private readonly handleCamDown = (ev: PointerEvent): void => {
+    if (!this.isControlEventAllowed(ev)) return;
+    ev.preventDefault();
+    this.cameraTogglePressed = true;
+    this.camBtn?.classList.add('is-pressed');
   };
 
   private readonly handlePauseDown = (ev: PointerEvent): void => {

@@ -19,6 +19,7 @@ import type {
   CameraMode,
   CharacterId,
   EnemyState,
+  ITerrainSampler,
   InteractableKind,
   InteractableVariant,
   SimEvent,
@@ -27,8 +28,10 @@ import type {
 import type { AssetRegistry } from '../assets/AssetRegistry';
 import type { ArticulatedBossRig, CharacterRig } from '../assets/ProceduralLowPolyPack';
 import {
+  createEnergyBeamMaterial,
   createMkToonMaterial,
   createOutlineMaterial,
+  getSoftContactShadowTexture,
   setMkToonHitFlash,
   setMkToonTexture,
 } from './toonShader';
@@ -108,6 +111,7 @@ const AREA_EFFECT_POOL_CAPACITY = 72;
 const SHRINE_RING_POOL_CAPACITY = 24;
 const PYLON_POOL_CAPACITY = 16;
 const LAMP_POOL_CAPACITY = 12;
+const ENTITY_SHADOW_CAPACITY = 360;
 
 interface OutlinedInstancedPool {
   main: THREE.InstancedMesh;
@@ -258,6 +262,13 @@ export class EntityInstancer {
   private finalBossWorldPos = new THREE.Vector3(0, 3.5, 0);
   private finalBossActive = false;
 
+  // Dynamic soft radial contact shadow pool for enemies, bosses & interactables (ZERO allocs!)
+  private currentTerrain: ITerrainSampler | null = null;
+  private readonly entityShadowGeo: THREE.PlaneGeometry;
+  private readonly entityShadowMat: THREE.MeshBasicMaterial;
+  private readonly entityShadowMesh: THREE.InstancedMesh;
+  private entityShadowCount = 0;
+
   // Pre-allocated scratch math objects (ZERO per-frame allocations!)
   private readonly _mat = new THREE.Matrix4();
   private readonly _pos = new THREE.Vector3();
@@ -276,6 +287,27 @@ export class EntityInstancer {
     this.assets = assets;
     this.rootGroup.name = 'EntityInstancerRoot';
 
+    this.entityShadowGeo = new THREE.PlaneGeometry(2.0, 2.0);
+    this.entityShadowGeo.rotateX(-Math.PI * 0.5);
+    this.entityShadowMat = new THREE.MeshBasicMaterial({
+      map: getSoftContactShadowTexture(),
+      transparent: true,
+      opacity: 0.66,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    });
+    this.entityShadowMesh = new THREE.InstancedMesh(
+      this.entityShadowGeo,
+      this.entityShadowMat,
+      ENTITY_SHADOW_CAPACITY,
+    );
+    this.entityShadowMesh.count = 0;
+    this.entityShadowMesh.visible = false;
+    this.entityShadowMesh.frustumCulled = false;
+    this.entityShadowMesh.renderOrder = 1;
+    this.rootGroup.add(this.entityShadowMesh);
+
     this.initEnemyPools();
     this.initProjectilePools();
     this.initPickupPools();
@@ -284,6 +316,31 @@ export class EntityInstancer {
     this.initBossPortal();
     this.initPylonPool();
     this.initDarknessLampPool();
+  }
+
+  public setTerrain(terrain: ITerrainSampler | null): void {
+    this.currentTerrain = terrain;
+  }
+
+  private pushContactShadow(x: number, y: number, z: number, radius: number): void {
+    if (this.entityShadowCount >= ENTITY_SHADOW_CAPACITY) return;
+    let gy = y;
+    if (this.currentTerrain) {
+      const s = this.currentTerrain.sample(x, z);
+      gy = s.height;
+      const heightAbove = Math.max(0, y - gy);
+      if (heightAbove > 14) return;
+      this._vecA.set(s.normal.x, s.normal.y, s.normal.z).normalize();
+      this._quat.setFromUnitVectors(this._yAxis, this._vecA);
+      const shrink = Math.max(0.45, 1.0 - heightAbove * 0.045);
+      this._scale.set(radius * shrink, 1, radius * shrink);
+    } else {
+      this._quat.identity();
+      this._scale.set(radius, 1, radius);
+    }
+    this._pos.set(x, gy + 0.055, z);
+    this._mat.compose(this._pos, this._quat, this._scale);
+    this.entityShadowMesh.setMatrixAt(this.entityShadowCount++, this._mat);
   }
 
   private initEnemyPools(): void {
@@ -312,6 +369,8 @@ export class EntityInstancer {
       const outline = new THREE.InstancedMesh(pair.outlineGeometry, outlineMat, cap);
       main.count = 0;
       outline.count = 0;
+      main.visible = false;
+      outline.visible = false;
       main.frustumCulled = false;
       outline.frustumCulled = false;
       main.setColorAt(0, white);
@@ -347,6 +406,8 @@ export class EntityInstancer {
       const outline = new THREE.InstancedMesh(pair.outlineGeometry, outlineMat, cap);
       main.count = 0;
       outline.count = 0;
+      main.visible = false;
+      outline.visible = false;
       main.frustumCulled = false;
       outline.frustumCulled = false;
       main.setColorAt(0, white);
@@ -377,6 +438,8 @@ export class EntityInstancer {
       const outline = new THREE.InstancedMesh(pair.outlineGeometry, outlineMat, cap);
       main.count = 0;
       outline.count = 0;
+      main.visible = false;
+      outline.visible = false;
       main.frustumCulled = false;
       outline.frustumCulled = false;
       main.setColorAt(0, white);
@@ -584,17 +647,9 @@ export class EntityInstancer {
     const vortexMesh = new THREE.Mesh(vortexGeo, vortexMat);
     vortexMesh.position.set(0, 3.05, 0);
 
-    const beaconGeo = new THREE.CylinderGeometry(0.75, 1.35, 32, 8, 1, true);
-    beaconGeo.translate(0, 16, 0);
-    const beaconMat = createMkToonMaterial({
-      color: 0xb938ff,
-      emissive: 0x7b2cbf,
-      emissiveIntensity: 1.0,
-      transparent: true,
-      opacity: 0.24,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
+    const beaconGeo = new THREE.CylinderGeometry(0.95, 1.55, 28, 12, 1, true);
+    beaconGeo.translate(0, 14, 0);
+    const beaconMat = createEnergyBeamMaterial(0xc05eff, 0.55);
     const beacon = new THREE.Mesh(beaconGeo, beaconMat);
 
     this.portalVortexMesh = vortexMesh;
@@ -693,15 +748,7 @@ export class EntityInstancer {
       this.rootGroup.add(group);
 
       // Pulsing crimson energy tether beam in world space (pylon top -> FinalBoss core!)
-      const beamMat = createMkToonMaterial({
-        color: 0xff2644,
-        emissive: 0xff2644,
-        emissiveIntensity: 1.5,
-        transparent: true,
-        opacity: 0.76,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
+      const beamMat = createEnergyBeamMaterial(0xff2644, 0.85);
       const beamMesh = new THREE.Mesh(beamGeo, beamMat);
       beamMesh.visible = false;
       beamMesh.frustumCulled = false;
@@ -789,15 +836,7 @@ export class EntityInstancer {
         side: THREE.DoubleSide,
         depthWrite: false,
       });
-      const coneMat = createMkToonMaterial({
-        color: 0xffe885,
-        emissive: 0xffb703,
-        emissiveIntensity: 1.25,
-        transparent: true,
-        opacity: 0.22,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
+      const coneMat = createEnergyBeamMaterial(0xffe066, 0.36);
 
       const outerRing = new THREE.Mesh(outerGeo, outerMat);
       outerRing.position.y = 0.14;
@@ -879,6 +918,8 @@ export class EntityInstancer {
     if (this.playerAttackSwing > 0) this.playerAttackSwing = Math.max(0, this.playerAttackSwing - dt * 5.5);
     if (this.diceSpinBoost > 0) this.diceSpinBoost = Math.max(0, this.diceSpinBoost - dt * 2.2);
 
+    this.entityShadowCount = 0;
+
     this.syncPlayer(prevState, currState, interpAlpha, dt, timeSec, cameraMode);
     this.syncEnemies(prevState, currState, interpAlpha, timeSec);
     this.syncPickups(currState, timeSec);
@@ -886,6 +927,12 @@ export class EntityInstancer {
     this.syncAreaEffects(currState, timeSec);
     this.syncInteractables(currState, timeSec);
     this.syncBossPortalPylonsAndLamps(currState, dt, timeSec);
+
+    this.entityShadowMesh.count = this.entityShadowCount;
+    this.entityShadowMesh.visible = this.entityShadowCount > 0;
+    if (this.entityShadowCount > 0) {
+      this.entityShadowMesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   private lowerCached(s: string): string {
@@ -1180,7 +1227,9 @@ export class EntityInstancer {
           this.entBossTier = tier;
           this.rootGroup.add(this.entBossRig.root);
         }
-        this.animateBossRig(this.entBossRig, x, y, z, yaw, Math.max(0.85, e.radius / 2.2), timeSec, e.id, flashRem, false);
+        const entSc = Math.max(0.85, e.radius / 2.2);
+        this.animateBossRig(this.entBossRig, x, y, z, yaw, entSc, timeSec, e.id, flashRem, false);
+        this.pushContactShadow(x, y, z, entSc * 3.1);
         continue;
       }
 
@@ -1197,7 +1246,9 @@ export class EntityInstancer {
           this.pharaohBossTier = tier;
           this.rootGroup.add(this.pharaohBossRig.root);
         }
-        this.animateBossRig(this.pharaohBossRig, x, y, z, yaw, Math.max(0.9, e.radius / 1.8), timeSec, e.id, flashRem, false);
+        const phSc = Math.max(0.9, e.radius / 1.8);
+        this.animateBossRig(this.pharaohBossRig, x, y, z, yaw, phSc, timeSec, e.id, flashRem, false);
+        this.pushContactShadow(x, y, z, phSc * 2.6);
         continue;
       }
 
@@ -1208,7 +1259,9 @@ export class EntityInstancer {
           this.bigBobRig = this.assets.builtIn.buildBigBobRig();
           this.rootGroup.add(this.bigBobRig.root);
         }
-        this.animateBossRig(this.bigBobRig, x, y, z, yaw, Math.max(0.95, e.radius / 2.6), timeSec, e.id, flashRem, true);
+        const bobSc = Math.max(0.95, e.radius / 2.6);
+        this.animateBossRig(this.bigBobRig, x, y, z, yaw, bobSc, timeSec, e.id, flashRem, true);
+        this.pushContactShadow(x, y, z, bobSc * 3.2);
         continue;
       }
 
@@ -1223,6 +1276,7 @@ export class EntityInstancer {
           this.rootGroup.add(this.finalBossRig.root);
         }
         this.animateBossRig(this.finalBossRig, x, y, z, yaw, bossScale, timeSec, e.id, flashRem, false, hasActivePylon);
+        this.pushContactShadow(x, y, z, bossScale * 3.2);
         continue;
       }
 
@@ -1267,6 +1321,7 @@ export class EntityInstancer {
       const idx = pool.count++;
       pool.main.setMatrixAt(idx, this._mat);
       pool.outline.setMatrixAt(idx, this._mat);
+      this.pushContactShadow(x, y, z, Math.max(0.85, e.radius * 1.45));
 
       if (flashRem > 0) {
         this._col.setRGB(3.2, 3.1, 2.9);
@@ -1301,6 +1356,8 @@ export class EntityInstancer {
       const pool = this.enemyPoolList[i]!;
       pool.main.count = pool.count;
       pool.outline.count = pool.count;
+      pool.main.visible = pool.count > 0;
+      pool.outline.visible = pool.count > 0;
       if (pool.count > 0) {
         pool.main.instanceMatrix.needsUpdate = true;
         pool.outline.instanceMatrix.needsUpdate = true;
@@ -1361,6 +1418,8 @@ export class EntityInstancer {
       const pool = this.pickupPoolList[i]!;
       pool.main.count = pool.count;
       pool.outline.count = pool.count;
+      pool.main.visible = pool.count > 0;
+      pool.outline.visible = pool.count > 0;
       if (pool.count > 0) {
         pool.main.instanceMatrix.needsUpdate = true;
         pool.outline.instanceMatrix.needsUpdate = true;
@@ -1450,6 +1509,8 @@ export class EntityInstancer {
       const pool = this.projectilePoolList[i]!;
       pool.main.count = pool.count;
       pool.outline.count = pool.count;
+      pool.main.visible = pool.count > 0;
+      pool.outline.visible = pool.count > 0;
       if (pool.count > 0) {
         pool.main.instanceMatrix.needsUpdate = true;
         pool.outline.instanceMatrix.needsUpdate = true;
@@ -1681,6 +1742,10 @@ export class EntityInstancer {
 
       slot.mesh.visible = !(it.kind === 'Pot' && it.used);
       slot.mesh.position.set(it.pos.x, it.pos.y, it.pos.z);
+      if (slot.mesh.visible) {
+        const shR = it.kind === 'Pot' ? 0.85 : it.kind === 'BossSpawner' ? 2.6 : 1.75;
+        this.pushContactShadow(it.pos.x, it.pos.y, it.pos.z, shR);
+      }
 
       if (it.kind === 'ChargeShrine' && !it.used) {
         slot.mesh.rotation.y = Math.sin(timeSec * 0.8 + it.id) * 0.12;
@@ -1881,6 +1946,8 @@ export class EntityInstancer {
     if (this.pharaohBossRig) { this.pharaohBossRig.dispose(); this.pharaohBossRig = null; }
     if (this.bigBobRig) { this.bigBobRig.dispose(); this.bigBobRig = null; }
     if (this.finalBossRig) { this.finalBossRig.dispose(); this.finalBossRig = null; }
+    this.entityShadowGeo.dispose();
+    this.entityShadowMat.dispose();
 
     for (const pool of [
       ...this.enemyPools.values(),

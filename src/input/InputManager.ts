@@ -134,7 +134,8 @@ export class InputManager implements IInputManager {
       frame.crouchSlide = kb.crouchSlide || gp.crouchSlide || touch.crouchSlide;
       frame.fireHeld = kb.fireHeld || gp.fireHeld || touch.fireHeld;
       frame.interactPressed = kb.interactPressed || gp.interactPressed || touch.interactPressed;
-      frame.cameraTogglePressed = kb.cameraTogglePressed || gp.cameraTogglePressed;
+      frame.cameraTogglePressed =
+        kb.cameraTogglePressed || gp.cameraTogglePressed || touch.cameraTogglePressed;
       frame.pausePressed = kb.pausePressed || gp.pausePressed || touch.pausePressed;
       frame.mapTogglePressed = kb.mapTogglePressed || gp.mapTogglePressed || touch.mapTogglePressed;
       frame.activeSkillPressed = kb.activeSkillPressed || gp.activeSkillPressed;
