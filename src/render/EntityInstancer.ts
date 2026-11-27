@@ -1,15 +1,17 @@
 /**
- * KRUNKEDBONK — Zero-GC Pooled & Instanced Entity Renderer
+ * KRUNKEDBONK — Zero-GC Pooled & Instanced Entity Renderer (Wave 2 Full Expansion)
  *
  * Syncs prevState -> currState with interpAlpha (or 1.0 when classic50HzSnap is enabled):
- * - Articulated Player Rig (Fox, Calcium skateboard, SirOofie cape/sword, Megachad flex/aura)
- * - Per-archetype InstancedMesh Enemy Pools with smooth Inverted-Hull Outlines, walk wobble,
- *   debuff tints, and crisp white hit-flash + dedicated articulated Lil Bark (EntStage1) boss rig
- * - Spinning faceted XP gems & powerup pickups
- * - Distinct weapon projectiles (fireball, bone, sword crescent, bullet, boulder, lightning, sniper)
- * - Pooled Area Effects (Aura ring, Nova, Pools, Beams, Tornado, BlackHole, RootSpikes telegraphs)
- * - Outlined Interactables (including ChargeShrine ground ring + radial fill progress arc),
- *   swirling BossPortal archway, BossPylons, and DarknessLamps
+ * - ALL 21 Articulated Playable Character Rigs w/ signature animations (Birdo glide wings,
+ *   TonyMcZoom neon hoverboard, Calcium skateboard, Dicehead tumbling D6 head, Megachad flex, etc.)
+ * - 4 Dedicated Articulated Boss Rigs (EntStage1/2/3, Pharaoh1/2/3, Big Bob GhostKing, FinalBoss)
+ * - Per-archetype InstancedMesh Enemy Pools covering all 52 Forest/Desert/Graveyard/Swarm enemies
+ * - ALL 30 Weapon Projectile & AreaEffect visuals (Bananarang, BlackHole, Dragon's Breath,
+ *   FlameWalker, FrostWalker, SpaceNoodle tether, Tornado funnel, Katana arcs, Mines,
+ *   PoisonFlask pools, Aegis plates, Homing Rockets, tumbling Dice, etc.)
+ * - FinalBossMap 11 Boss Pylons: rising hexagonal pillars, radial ground charge ring filling,
+ *   pulsing crimson energy beams linked to FinalBoss, and spinning stolen-weapon holograms!
+ * - Graveyard Big Bob Darkness Lamps: wrought-iron lamp posts, warm golden light pools & beams!
  */
 
 import * as THREE from 'three';
@@ -23,7 +25,7 @@ import type {
   SimState,
 } from '../contracts/index';
 import type { AssetRegistry } from '../assets/AssetRegistry';
-import type { CharacterRig } from '../assets/ProceduralLowPolyPack';
+import type { ArticulatedBossRig, CharacterRig } from '../assets/ProceduralLowPolyPack';
 import {
   createMkToonMaterial,
   createOutlineMaterial,
@@ -34,20 +36,62 @@ import {
 const ENEMY_ARCHETYPES = [
   'Goblin',
   'GoblinStrong',
+  'GoblinTank',
   'Skeleton',
+  'GoldenSkeleton',
+  'XpSkeleton',
+  'ArmoredSkeleton',
+  'SkeletonDusty',
   'Slime',
+  'Ghoul',
+  'Zombie',
+  'BoomerSpider',
+  'Bee',
+  'Frog',
+  'Mummy',
+  'MummyTank',
+  'Scorpion',
+  'MinibossScorpion',
+  'CactusShooter',
+  'Wisp',
+  'Tumblebone',
+  'Head',
   'MinibossGolem',
+  'MinibossGolemSand',
   'MinibossPig',
+  'Ghostham',
+  'CalciumDad',
   'Ghost',
+  'GreaterGhost',
   'GhostPurple',
   'GhostRed',
+  'GhostGrave',
   'GhostInvincible',
 ] as const;
 
 const PROJECTILE_ARCHETYPES = [
   'fireball',
+  'fire_cone',
   'bone',
   'sword_arc',
+  'katana_arc',
+  'hero_arc',
+  'corrupt_arc',
+  'scythe',
+  'axe',
+  'banana',
+  'rocket',
+  'arrow',
+  'dagger',
+  'dice',
+  'flask',
+  'aegis_shield',
+  'blood_orb',
+  'frost_shard',
+  'noodle',
+  'tornado_proj',
+  'blackhole_orb',
+  'mine',
   'bullet',
   'boulder',
   'lightning',
@@ -60,9 +104,10 @@ const PICKUP_POOLS = ['gem', 'coin', 'heart', 'orb'] as const;
 const ENEMY_POOL_CAPACITY = 260;
 const PROJECTILE_POOL_CAPACITY = 220;
 const PICKUP_POOL_CAPACITY = 360;
-const AREA_EFFECT_POOL_CAPACITY = 64;
+const AREA_EFFECT_POOL_CAPACITY = 72;
 const SHRINE_RING_POOL_CAPACITY = 24;
 const PYLON_POOL_CAPACITY = 16;
+const LAMP_POOL_CAPACITY = 12;
 
 interface OutlinedInstancedPool {
   main: THREE.InstancedMesh;
@@ -78,11 +123,17 @@ interface AreaEffectVisualSlot {
   ring: THREE.Mesh;
   disc: THREE.Mesh;
   column: THREE.Mesh;
+  coreMesh: THREE.Mesh;
+  accretionRing: THREE.Mesh;
   spikes: THREE.Group;
+  slashMesh: THREE.Mesh;
   ringMat: THREE.ShaderMaterial;
   discMat: THREE.ShaderMaterial;
   colMat: THREE.ShaderMaterial;
+  coreMat: THREE.ShaderMaterial;
+  accretionMat: THREE.ShaderMaterial;
   spikeMat: THREE.ShaderMaterial;
+  slashMat: THREE.ShaderMaterial;
 }
 
 interface InteractableSlot {
@@ -104,6 +155,34 @@ interface ShrineRingSlot {
   fillMat: THREE.ShaderMaterial;
 }
 
+interface PylonVisualSlot {
+  group: THREE.Group;
+  pillarMesh: THREE.Mesh;
+  pillarMat: THREE.ShaderMaterial;
+  outerRing: THREE.Mesh;
+  fillDisc: THREE.Mesh;
+  outerMat: THREE.ShaderMaterial;
+  fillMat: THREE.ShaderMaterial;
+  beamMesh: THREE.Mesh;
+  beamMat: THREE.ShaderMaterial;
+  holoGroup: THREE.Group;
+  holoMat: THREE.ShaderMaterial;
+  riseOffset: number;
+}
+
+interface DarknessLampVisualSlot {
+  group: THREE.Group;
+  postMat: THREE.ShaderMaterial;
+  flameMesh: THREE.Mesh;
+  flameMat: THREE.ShaderMaterial;
+  outerRing: THREE.Mesh;
+  fillDisc: THREE.Mesh;
+  outerMat: THREE.ShaderMaterial;
+  fillMat: THREE.ShaderMaterial;
+  lightCone: THREE.Mesh;
+  coneMat: THREE.ShaderMaterial;
+}
+
 function lerpAngle(a: number, b: number, t: number): number {
   let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (diff < -Math.PI) diff += Math.PI * 2;
@@ -116,56 +195,82 @@ export class EntityInstancer {
 
   // Articulated Player Rig
   private playerRig: CharacterRig | null = null;
-  private playerRigKey = '';
+  private playerRigChar: CharacterId | null = null;
+  private playerRigSkin: string | null = null;
+  private playerRigHat: string | null = null;
   private playerHitFlash = 0;
   private playerAttackSwing = 0;
   private wheelAngle = 0;
+  private diceSpinBoost = 0;
 
-  // Articulated Boss Rig for EntStage1 (Lil Bark)
-  private entBossRig: ReturnType<AssetRegistry['builtIn']['buildEntBossRig']> | null = null;
-  private entBossHitFlash = 0;
+  // 4 Dedicated Articulated Boss Rigs
+  private entBossRig: ArticulatedBossRig | null = null;
+  private entBossTier = 0;
+  private pharaohBossRig: ArticulatedBossRig | null = null;
+  private pharaohBossTier = 0;
+  private bigBobRig: ArticulatedBossRig | null = null;
+  private finalBossRig: ArticulatedBossRig | null = null;
 
-  // Instanced Pools
+  // Instanced Pools + flat iteration arrays (ZERO iterator allocations in hot loops!)
   private readonly enemyPools = new Map<string, OutlinedInstancedPool>();
+  private readonly enemyPoolList: OutlinedInstancedPool[] = [];
   private readonly projectilePools = new Map<string, OutlinedInstancedPool>();
+  private readonly projectilePoolList: OutlinedInstancedPool[] = [];
   private readonly pickupPools = new Map<string, OutlinedInstancedPool>();
+  private readonly pickupPoolList: OutlinedInstancedPool[] = [];
+  private readonly lowerCache = new Map<string, string>();
 
   // Pooled Area Effects
   private readonly areaSlots: AreaEffectVisualSlot[] = [];
   private readonly areaGeometries: THREE.BufferGeometry[] = [];
 
-  // Interactable slots (reused by entity id; zero per-frame allocations once world spawns!)
+  // Interactable slots (Map for O(1) lookup + flat array for ZERO-alloc iteration!)
   private readonly interactableSlots = new Map<number, InteractableSlot>();
+  private readonly interactableSlotList: InteractableSlot[] = [];
   private readonly shrineRings: ShrineRingSlot[] = [];
   private readonly shrineRingGeometries: THREE.BufferGeometry[] = [];
 
-  // Boss Portal archway + animated swirling vortex
+  // Boss Portal archway + swirling vortex
   private readonly bossPortalGroup = new THREE.Group();
   private portalVortexMesh: THREE.Mesh | null = null;
   private portalVortexMat: THREE.ShaderMaterial | null = null;
   private readonly portalGeometries: THREE.BufferGeometry[] = [];
   private readonly portalMaterials: THREE.Material[] = [];
 
-  // FinalBossMap Boss Pylons + Graveyard Darkness Lamps
-  private readonly pylonMeshes: THREE.Group[] = [];
-  private readonly pylonMaterials: THREE.ShaderMaterial[] = [];
+  // FinalBossMap 11 Boss Pylons (rising pillars + charge rings + crimson beams + stolen-weapon holos!)
+  private readonly pylonSlots: PylonVisualSlot[] = [];
   private readonly pylonGeometries: THREE.BufferGeometry[] = [];
+  private readonly pylonExtraMaterials: THREE.Material[] = [];
 
-  // Hit-flash timers by enemy entityId (reused Map)
+  // Graveyard Big Bob Darkness Lamps (wrought-iron lanterns + warm golden light pools!)
+  private readonly lampSlots: DarknessLampVisualSlot[] = [];
+  private readonly lampGeometries: THREE.BufferGeometry[] = [];
+  private readonly lampExtraMaterials: THREE.Material[] = [];
+
+  // Hit-flash & interpolation maps (reused in place, ZERO allocations!)
   private readonly hitFlashTimers = new Map<number, number>();
+  private readonly hitFlashIds: number[] = [];
   private readonly prevEnemyById = new Map<number, EnemyState>();
   private readonly prevProjById = new Map<number, { x: number; y: number; z: number }>();
   private readonly activeInteractableIds = new Set<number>();
+
+  // Cached FinalBoss world position for pylon beam linking (ZERO allocations!)
+  private finalBossWorldPos = new THREE.Vector3(0, 3.5, 0);
+  private finalBossActive = false;
 
   // Pre-allocated scratch math objects (ZERO per-frame allocations!)
   private readonly _mat = new THREE.Matrix4();
   private readonly _pos = new THREE.Vector3();
   private readonly _vel = new THREE.Vector3();
+  private readonly _vecA = new THREE.Vector3();
+  private readonly _vecB = new THREE.Vector3();
+  private readonly _mid = new THREE.Vector3();
   private readonly _quat = new THREE.Quaternion();
   private readonly _euler = new THREE.Euler();
   private readonly _scale = new THREE.Vector3();
   private readonly _col = new THREE.Color();
   private readonly _zAxis = new THREE.Vector3(0, 0, 1);
+  private readonly _yAxis = new THREE.Vector3(0, 1, 0);
 
   constructor(assets: AssetRegistry) {
     this.assets = assets;
@@ -178,6 +283,7 @@ export class EntityInstancer {
     this.initShrineRingPool();
     this.initBossPortal();
     this.initPylonPool();
+    this.initDarknessLampPool();
   }
 
   private initEnemyPools(): void {
@@ -195,7 +301,12 @@ export class EntityInstancer {
         gloss: pair.gloss ?? 0.12,
       });
       const outlineMat = createOutlineMaterial(pair.outlineThickness, 0x0b0d14);
-      const cap = arch.startsWith('Miniboss') || arch === 'GhostInvincible' ? 24 : ENEMY_POOL_CAPACITY;
+      const isHeavy =
+        arch.startsWith('Miniboss') ||
+        arch === 'GhostInvincible' ||
+        arch === 'CalciumDad' ||
+        arch === 'Ghostham';
+      const cap = isHeavy ? 28 : ENEMY_POOL_CAPACITY;
 
       const main = new THREE.InstancedMesh(pair.geometry, mainMat, cap);
       const outline = new THREE.InstancedMesh(pair.outlineGeometry, outlineMat, cap);
@@ -206,7 +317,9 @@ export class EntityInstancer {
       main.setColorAt(0, white);
 
       this.rootGroup.add(main, outline);
-      this.enemyPools.set(arch, { main, outline, mainMat, outlineMat, count: 0, capacity: cap });
+      const pool: OutlinedInstancedPool = { main, outline, mainMat, outlineMat, count: 0, capacity: cap };
+      this.enemyPools.set(arch, pool);
+      this.enemyPoolList.push(pool);
     }
   }
 
@@ -222,11 +335,16 @@ export class EntityInstancer {
         rimStrength: 0.5,
         emissive: pair.emissiveHex ?? 0x000000,
         emissiveIntensity: pair.emissiveIntensity ?? 0.5,
+        gloss: pair.gloss ?? 0.25,
       });
       const outlineMat = createOutlineMaterial(pair.outlineThickness, 0x0b0d14);
+      const cap =
+        arch === 'bullet' || arch === 'fireball' || arch === 'bone' || arch === 'arrow' || arch === 'dagger'
+          ? PROJECTILE_POOL_CAPACITY
+          : 96;
 
-      const main = new THREE.InstancedMesh(pair.geometry, mainMat, PROJECTILE_POOL_CAPACITY);
-      const outline = new THREE.InstancedMesh(pair.outlineGeometry, outlineMat, PROJECTILE_POOL_CAPACITY);
+      const main = new THREE.InstancedMesh(pair.geometry, mainMat, cap);
+      const outline = new THREE.InstancedMesh(pair.outlineGeometry, outlineMat, cap);
       main.count = 0;
       outline.count = 0;
       main.frustumCulled = false;
@@ -234,14 +352,9 @@ export class EntityInstancer {
       main.setColorAt(0, white);
 
       this.rootGroup.add(main, outline);
-      this.projectilePools.set(arch, {
-        main,
-        outline,
-        mainMat,
-        outlineMat,
-        count: 0,
-        capacity: PROJECTILE_POOL_CAPACITY,
-      });
+      const pool: OutlinedInstancedPool = { main, outline, mainMat, outlineMat, count: 0, capacity: cap };
+      this.projectilePools.set(arch, pool);
+      this.projectilePoolList.push(pool);
     }
   }
 
@@ -269,7 +382,9 @@ export class EntityInstancer {
       main.setColorAt(0, white);
 
       this.rootGroup.add(main, outline);
-      this.pickupPools.set(kind, { main, outline, mainMat, outlineMat, count: 0, capacity: cap });
+      const pool: OutlinedInstancedPool = { main, outline, mainMat, outlineMat, count: 0, capacity: cap };
+      this.pickupPools.set(kind, pool);
+      this.pickupPoolList.push(pool);
     }
   }
 
@@ -278,11 +393,16 @@ export class EntityInstancer {
     ringGeo.rotateX(-Math.PI * 0.5);
     const discGeo = new THREE.CircleGeometry(1.0, 24);
     discGeo.rotateX(-Math.PI * 0.5);
-    const colGeo = new THREE.CylinderGeometry(0.45, 0.72, 1.0, 10, 1, true);
+    const colGeo = new THREE.CylinderGeometry(0.55, 0.28, 1.0, 10, 1, true);
     colGeo.translate(0, 0.5, 0);
+    const coreGeo = new THREE.IcosahedronGeometry(0.45, 0);
+    const accretionGeo = new THREE.TorusGeometry(0.85, 0.12, 5, 16);
+    accretionGeo.rotateX(Math.PI * 0.5);
     const spikeGeo = new THREE.ConeGeometry(0.24, 1.7, 5);
     spikeGeo.translate(0, 0.85, 0);
-    this.areaGeometries.push(ringGeo, discGeo, colGeo, spikeGeo);
+    const slashGeo = new THREE.TorusGeometry(0.88, 0.14, 4, 14, Math.PI * 0.95);
+    slashGeo.rotateX(Math.PI * 0.5);
+    this.areaGeometries.push(ringGeo, discGeo, colGeo, coreGeo, accretionGeo, spikeGeo, slashGeo);
 
     for (let i = 0; i < AREA_EFFECT_POOL_CAPACITY; i++) {
       const group = new THREE.Group();
@@ -311,7 +431,23 @@ export class EntityInstancer {
         emissive: 0x38f2ff,
         emissiveIntensity: 1.15,
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.58,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const coreMat = createMkToonMaterial({
+        color: 0x10051f,
+        emissive: 0x7b2cbf,
+        emissiveIntensity: 0.75,
+        rimStrength: 0.75,
+        rimColor: 0xe66bff,
+      });
+      const accretionMat = createMkToonMaterial({
+        color: 0xc05eff,
+        emissive: 0xb938ff,
+        emissiveIntensity: 1.25,
+        transparent: true,
+        opacity: 0.82,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
@@ -320,6 +456,15 @@ export class EntityInstancer {
         emissive: 0xff3b5c,
         emissiveIntensity: 0.35,
       });
+      const slashMat = createMkToonMaterial({
+        color: 0x7df9ff,
+        emissive: 0x5cf7ff,
+        emissiveIntensity: 1.15,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
 
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.position.y = 0.14;
@@ -327,22 +472,44 @@ export class EntityInstancer {
       disc.position.y = 0.1;
       const column = new THREE.Mesh(colGeo, colMat);
       column.visible = false;
+      const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+      coreMesh.visible = false;
+      const accretionRing = new THREE.Mesh(accretionGeo, accretionMat);
+      accretionRing.visible = false;
+      const slashMesh = new THREE.Mesh(slashGeo, slashMat);
+      slashMesh.position.y = 0.65;
+      slashMesh.visible = false;
 
-      // Cluster of thorny wooden RootSpikes for boss hazard telegraphs
       const spikes = new THREE.Group();
       spikes.visible = false;
       for (let s = 0; s < 5; s++) {
         const sp = new THREE.Mesh(spikeGeo, spikeMat);
         const a = (s / 5) * Math.PI * 2;
-        const rad = s === 0 ? 0 : 0.42;
+        const rad = s === 0 ? 0 : 0.48;
         sp.position.set(Math.cos(a) * rad, 0, Math.sin(a) * rad);
-        sp.rotation.set((s % 2 === 0 ? 0.18 : -0.18), a, 0.15);
+        sp.rotation.set(s % 2 === 0 ? 0.18 : -0.18, a, 0.15);
         spikes.add(sp);
       }
 
-      group.add(ring, disc, column, spikes);
+      group.add(ring, disc, column, coreMesh, accretionRing, spikes, slashMesh);
       this.rootGroup.add(group);
-      this.areaSlots.push({ group, ring, disc, column, spikes, ringMat, discMat, colMat, spikeMat });
+      this.areaSlots.push({
+        group,
+        ring,
+        disc,
+        column,
+        coreMesh,
+        accretionRing,
+        spikes,
+        slashMesh,
+        ringMat,
+        discMat,
+        colMat,
+        coreMat,
+        accretionMat,
+        spikeMat,
+        slashMat,
+      });
     }
   }
 
@@ -404,7 +571,6 @@ export class EntityInstancer {
     const archMesh = new THREE.Mesh(archPair.geometry, archMat);
     archMesh.add(new THREE.Mesh(archPair.outlineGeometry, outMat));
 
-    // Swirling pixelated portal vortex plane inside the archway
     const vortexGeo = new THREE.CircleGeometry(2.1, 18);
     const vortexMat = createMkToonMaterial({
       color: 0xffffff,
@@ -418,7 +584,6 @@ export class EntityInstancer {
     const vortexMesh = new THREE.Mesh(vortexGeo, vortexMat);
     vortexMesh.position.set(0, 3.05, 0);
 
-    // Tall translucent purple-cyan sky beacon
     const beaconGeo = new THREE.CylinderGeometry(0.75, 1.35, 32, 8, 1, true);
     beaconGeo.translate(0, 16, 0);
     const beaconMat = createMkToonMaterial({
@@ -441,31 +606,222 @@ export class EntityInstancer {
     this.rootGroup.add(this.bossPortalGroup);
   }
 
+  /**
+   * Pre-allocates all FinalBossMap 11-Pylon assemblies:
+   * - Outlined hexagonal pillar rising smoothly from floor
+   * - Radial ground charge ring + progress fill disc
+   * - World-space pulsing crimson energy beam connecting active pylon -> Final Boss!
+   * - Spinning stolen-weapon hologram hovering above pylons holding a stolen weapon!
+   */
   private initPylonPool(): void {
     const pair = this.assets.builtIn.getInteractableGeometryPair('BossPylon', 'normal', false);
-    const ringGeo = new THREE.RingGeometry(0.9, 1.0, 24);
-    ringGeo.rotateX(-Math.PI * 0.5);
-    this.pylonGeometries.push(ringGeo);
+    const outerGeo = new THREE.RingGeometry(0.9, 1.0, 32);
+    outerGeo.rotateX(-Math.PI * 0.5);
+    const fillGeo = new THREE.CircleGeometry(0.92, 32);
+    fillGeo.rotateX(-Math.PI * 0.5);
+    const beamGeo = new THREE.CylinderGeometry(0.24, 0.24, 1.0, 7, 1, true);
+    const holoBladeGeo = new THREE.OctahedronGeometry(0.55, 0);
+    holoBladeGeo.scale(0.55, 1.85, 0.55);
+    const holoRingGeo = new THREE.TorusGeometry(0.92, 0.08, 5, 12);
+    const holoGuardGeo = new THREE.BoxGeometry(1.15, 0.16, 0.16);
+    this.pylonGeometries.push(outerGeo, fillGeo, beamGeo, holoBladeGeo, holoRingGeo, holoGuardGeo);
+
+    const sharedOutMat = createOutlineMaterial(pair.outlineThickness, 0x0b0d14);
+    this.pylonExtraMaterials.push(sharedOutMat);
 
     for (let i = 0; i < PYLON_POOL_CAPACITY; i++) {
-      const g = new THREE.Group();
-      g.visible = false;
-      const mat = createMkToonMaterial({
+      const group = new THREE.Group();
+      group.visible = false;
+
+      const pillarMat = createMkToonMaterial({
         color: 0xffffff,
         map: this.assets.getTexture(pair.textureKey),
+        mapStrength: 0.5,
         vertexColors: true,
         emissive: 0xc91e94,
         emissiveIntensity: 0.45,
+        rimStrength: 0.48,
+        rimColor: 0xffc83b,
       });
-      const outMat = createOutlineMaterial(pair.outlineThickness, 0x0b0d14);
-      const mesh = new THREE.Mesh(pair.geometry, mat);
-      mesh.add(new THREE.Mesh(pair.outlineGeometry, outMat));
-      const ring = new THREE.Mesh(ringGeo, mat);
-      ring.position.y = 0.14;
-      g.add(mesh, ring);
-      this.rootGroup.add(g);
-      this.pylonMeshes.push(g);
-      this.pylonMaterials.push(mat, outMat);
+      const pillarMesh = new THREE.Mesh(pair.geometry, pillarMat);
+      pillarMesh.add(new THREE.Mesh(pair.outlineGeometry, sharedOutMat));
+
+      const outerMat = createMkToonMaterial({
+        color: 0xff2ec4,
+        emissive: 0xff2644,
+        emissiveIntensity: 1.1,
+        transparent: true,
+        opacity: 0.88,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const fillMat = createMkToonMaterial({
+        color: 0xffd23f,
+        emissive: 0xffae19,
+        emissiveIntensity: 0.85,
+        transparent: true,
+        opacity: 0.34,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const outerRing = new THREE.Mesh(outerGeo, outerMat);
+      outerRing.position.y = 0.16;
+      const fillDisc = new THREE.Mesh(fillGeo, fillMat);
+      fillDisc.position.y = 0.12;
+
+      // Spinning stolen-weapon hologram assembly above pylon crystal!
+      const holoMat = createMkToonMaterial({
+        color: 0xffe45e,
+        emissive: 0xffd23f,
+        emissiveIntensity: 1.35,
+        transparent: true,
+        opacity: 0.88,
+        rimStrength: 0.7,
+        rimColor: 0xffffff,
+      });
+      const holoGroup = new THREE.Group();
+      holoGroup.position.set(0, 7.6, 0);
+      holoGroup.visible = false;
+      const holoBlade = new THREE.Mesh(holoBladeGeo, holoMat);
+      const holoGuard = new THREE.Mesh(holoGuardGeo, holoMat);
+      holoGuard.position.y = -0.35;
+      const holoRing = new THREE.Mesh(holoRingGeo, holoMat);
+      holoRing.rotation.x = Math.PI * 0.35;
+      holoGroup.add(holoBlade, holoGuard, holoRing);
+
+      group.add(pillarMesh, outerRing, fillDisc, holoGroup);
+      this.rootGroup.add(group);
+
+      // Pulsing crimson energy tether beam in world space (pylon top -> FinalBoss core!)
+      const beamMat = createMkToonMaterial({
+        color: 0xff2644,
+        emissive: 0xff2644,
+        emissiveIntensity: 1.5,
+        transparent: true,
+        opacity: 0.76,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const beamMesh = new THREE.Mesh(beamGeo, beamMat);
+      beamMesh.visible = false;
+      beamMesh.frustumCulled = false;
+      this.rootGroup.add(beamMesh);
+
+      this.pylonSlots.push({
+        group,
+        pillarMesh,
+        pillarMat,
+        outerRing,
+        fillDisc,
+        outerMat,
+        fillMat,
+        beamMesh,
+        beamMat,
+        holoGroup,
+        holoMat,
+        riseOffset: -5.2,
+      });
+    }
+  }
+
+  /**
+   * Pre-allocates Graveyard Big Bob Darkness Lamp assemblies:
+   * - Outlined wrought-iron Gothic lamp post
+   * - Glowing golden flame lantern core
+   * - Warm golden ground safe-zone light pool + charge progress ring + lantern light cone!
+   */
+  private initDarknessLampPool(): void {
+    const pair = this.assets.builtIn.getInteractableGeometryPair('DarknessLamp', 'normal', false);
+    const outerGeo = new THREE.RingGeometry(0.9, 1.0, 28);
+    outerGeo.rotateX(-Math.PI * 0.5);
+    const fillGeo = new THREE.CircleGeometry(0.96, 28);
+    fillGeo.rotateX(-Math.PI * 0.5);
+    const flameGeo = new THREE.OctahedronGeometry(0.32, 0);
+    const coneGeo = new THREE.CylinderGeometry(0.45, 2.8, 3.6, 10, 1, true);
+    coneGeo.translate(0, 1.8, 0);
+    this.lampGeometries.push(outerGeo, fillGeo, flameGeo, coneGeo);
+
+    const sharedOutMat = createOutlineMaterial(pair.outlineThickness, 0x090714);
+    this.lampExtraMaterials.push(sharedOutMat);
+
+    for (let i = 0; i < LAMP_POOL_CAPACITY; i++) {
+      const group = new THREE.Group();
+      group.visible = false;
+
+      const postMat = createMkToonMaterial({
+        color: 0xffffff,
+        map: this.assets.getTexture(pair.textureKey),
+        mapStrength: 0.55,
+        vertexColors: true,
+        emissive: 0x181c2b,
+        emissiveIntensity: 0.1,
+        rimStrength: 0.38,
+        rimColor: 0xffe08a,
+      });
+      const postMesh = new THREE.Mesh(pair.geometry, postMat);
+      postMesh.add(new THREE.Mesh(pair.outlineGeometry, sharedOutMat));
+
+      const flameMat = createMkToonMaterial({
+        color: 0xffe45e,
+        emissive: 0xffb703,
+        emissiveIntensity: 1.5,
+        rimStrength: 0.7,
+        rimColor: 0xffffff,
+      });
+      const flameMesh = new THREE.Mesh(flameGeo, flameMat);
+      flameMesh.position.set(0, 3.12, 0.92);
+
+      const outerMat = createMkToonMaterial({
+        color: 0x7c6a99,
+        emissive: 0x6b4ea8,
+        emissiveIntensity: 0.7,
+        transparent: true,
+        opacity: 0.72,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const fillMat = createMkToonMaterial({
+        color: 0xffd23f,
+        emissive: 0xffae19,
+        emissiveIntensity: 1.0,
+        transparent: true,
+        opacity: 0.28,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const coneMat = createMkToonMaterial({
+        color: 0xffe885,
+        emissive: 0xffb703,
+        emissiveIntensity: 1.25,
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+
+      const outerRing = new THREE.Mesh(outerGeo, outerMat);
+      outerRing.position.y = 0.14;
+      const fillDisc = new THREE.Mesh(fillGeo, fillMat);
+      fillDisc.position.y = 0.1;
+      const lightCone = new THREE.Mesh(coneGeo, coneMat);
+      lightCone.position.set(0, 0.05, 0.45);
+      lightCone.visible = false;
+
+      group.add(postMesh, flameMesh, outerRing, fillDisc, lightCone);
+      this.rootGroup.add(group);
+
+      this.lampSlots.push({
+        group,
+        postMat,
+        flameMesh,
+        flameMat,
+        outerRing,
+        fillDisc,
+        outerMat,
+        fillMat,
+        lightCone,
+        coneMat,
+      });
     }
   }
 
@@ -483,11 +839,17 @@ export class EntityInstancer {
     for (let i = 0; i < events.length; i++) {
       const ev = events[i]!;
       if (ev.type === 'damage_dealt') {
+        if (!this.hitFlashTimers.has(ev.targetId)) {
+          this.hitFlashIds.push(ev.targetId);
+        }
         this.hitFlashTimers.set(ev.targetId, 0.12);
       } else if (ev.type === 'player_hurt') {
         this.playerHitFlash = 0.22;
       } else if (ev.type === 'weapon_fire') {
         this.playerAttackSwing = 1.0;
+        this.diceSpinBoost = Math.min(1.0, this.diceSpinBoost + 0.55);
+      } else if (ev.type === 'player_level_up' || ev.type === 'player_jump') {
+        this.diceSpinBoost = 1.0;
       }
     }
   }
@@ -502,17 +864,20 @@ export class EntityInstancer {
   ): void {
     const dt = Math.min(0.05, Math.max(0, dtSec));
 
-    // Decay hit-flash timers in place (zero allocations)
-    for (const [id, rem] of this.hitFlashTimers) {
-      const next = rem - dt;
-      if (next <= 0) {
+    for (let i = this.hitFlashIds.length - 1; i >= 0; i--) {
+      const id = this.hitFlashIds[i]!;
+      const rem = this.hitFlashTimers.get(id);
+      if (rem === undefined || rem - dt <= 0) {
         this.hitFlashTimers.delete(id);
+        const last = this.hitFlashIds.pop()!;
+        if (i < this.hitFlashIds.length) this.hitFlashIds[i] = last;
       } else {
-        this.hitFlashTimers.set(id, next);
+        this.hitFlashTimers.set(id, rem - dt);
       }
     }
     if (this.playerHitFlash > 0) this.playerHitFlash = Math.max(0, this.playerHitFlash - dt);
     if (this.playerAttackSwing > 0) this.playerAttackSwing = Math.max(0, this.playerAttackSwing - dt * 5.5);
+    if (this.diceSpinBoost > 0) this.diceSpinBoost = Math.max(0, this.diceSpinBoost - dt * 2.2);
 
     this.syncPlayer(prevState, currState, interpAlpha, dt, timeSec, cameraMode);
     this.syncEnemies(prevState, currState, interpAlpha, timeSec);
@@ -520,12 +885,25 @@ export class EntityInstancer {
     this.syncProjectiles(prevState, currState, interpAlpha, timeSec);
     this.syncAreaEffects(currState, timeSec);
     this.syncInteractables(currState, timeSec);
-    this.syncBossPortalAndPylons(currState, timeSec);
+    this.syncBossPortalPylonsAndLamps(currState, dt, timeSec);
+  }
+
+  private lowerCached(s: string): string {
+    let out = this.lowerCache.get(s);
+    if (out === undefined) {
+      out = s.toLowerCase();
+      this.lowerCache.set(s, out);
+    }
+    return out;
   }
 
   private ensurePlayerRig(characterId: CharacterId, skinId: string | null, hatId: string | null): CharacterRig {
-    const key = `${characterId}|${skinId ?? ''}|${hatId ?? ''}`;
-    if (this.playerRig && this.playerRigKey === key) {
+    if (
+      this.playerRig &&
+      this.playerRigChar === characterId &&
+      this.playerRigSkin === skinId &&
+      this.playerRigHat === hatId
+    ) {
       return this.playerRig;
     }
     if (this.playerRig) {
@@ -533,7 +911,9 @@ export class EntityInstancer {
       this.playerRig.dispose();
     }
     this.playerRig = this.assets.builtIn.buildCharacterRig(characterId, skinId, hatId);
-    this.playerRigKey = key;
+    this.playerRigChar = characterId;
+    this.playerRigSkin = skinId;
+    this.playerRigHat = hatId;
     this.rootGroup.add(this.playerRig.root);
     return this.playerRig;
   }
@@ -550,7 +930,6 @@ export class EntityInstancer {
     const p0 = prevState.player;
     const p1 = currState.player;
 
-    // Hide body in 1st-person mode so camera isn't obstructed
     rig.root.visible = cameraMode !== 'first' && !p1.dead;
     if (!rig.root.visible) return;
 
@@ -560,18 +939,21 @@ export class EntityInstancer {
     const yaw = lerpAngle(p0.yaw, p1.yaw, alpha);
 
     rig.root.position.set(px, py, pz);
-    // Character rigs face local +Z; simcore yaw=0 faces -Z ((-sin(yaw), 0, -cos(yaw)))
     rig.root.rotation.set(0, yaw + Math.PI, 0);
 
     const hSpeed = Math.hypot(p1.vel.x, p1.vel.z);
     const moving = hSpeed > 0.6;
     const walkFreq = Math.min(18, 6.5 + hSpeed * 0.72);
     const walkPhase = timeSec * walkFreq;
+    const floatOffset =
+      rig.hoverMode === 'float'
+        ? 0.22 + Math.sin(timeSec * 3.4) * 0.08
+        : rig.hoverMode === 'hoverboard'
+          ? 0.14 + Math.sin(timeSec * 5.2) * 0.06
+          : 0;
 
-    // Expressive kinetic movement animation (slide lean, rail carve, walk bob, jump stretch!)
     if (p1.railId !== null) {
-      // Carving sideways on grind rail!
-      rig.bodyPivot.position.y = 0.08 + Math.sin(timeSec * 14) * 0.04;
+      rig.bodyPivot.position.y = 0.08 + floatOffset + Math.sin(timeSec * 14) * 0.04;
       rig.bodyPivot.rotation.set(-0.08, Math.PI * 0.35, Math.sin(timeSec * 9) * 0.14);
       rig.bodyPivot.scale.set(1.0, 0.94, 1.0);
       rig.leftArm.rotation.set(0, 0, 0.95 + Math.sin(timeSec * 9) * 0.18);
@@ -579,8 +961,7 @@ export class EntityInstancer {
       rig.leftLeg.rotation.set(0.15, 0, 0.12);
       rig.rightLeg.rotation.set(-0.15, 0, -0.12);
     } else if (p1.isSliding) {
-      // Low crouched high-speed slope slide!
-      rig.bodyPivot.position.y = -0.12;
+      rig.bodyPivot.position.y = -0.12 + floatOffset * 0.4;
       rig.bodyPivot.rotation.set(-0.46, 0.22, -0.14);
       rig.bodyPivot.scale.set(1.08, 0.64, 1.08);
       rig.leftArm.rotation.set(-0.5, 0, 0.65);
@@ -588,9 +969,8 @@ export class EntityInstancer {
       rig.leftLeg.rotation.set(-0.7, 0, 0);
       rig.rightLeg.rotation.set(0.4, 0, 0);
     } else if (!p1.grounded) {
-      // Dynamic airborne pitch & stretch
       const stretch = 1.0 + Math.min(0.12, Math.abs(p1.vel.y) * 0.008);
-      rig.bodyPivot.position.y = 0.05;
+      rig.bodyPivot.position.y = 0.05 + floatOffset * 0.5;
       rig.bodyPivot.rotation.set(Math.max(-0.28, Math.min(0.28, -p1.vel.y * 0.015)), 0, 0);
       rig.bodyPivot.scale.set(1 / Math.sqrt(stretch), stretch, 1 / Math.sqrt(stretch));
       rig.leftArm.rotation.set(-0.65, 0, 0.45);
@@ -598,20 +978,18 @@ export class EntityInstancer {
       rig.leftLeg.rotation.set(0.35, 0, 0);
       rig.rightLeg.rotation.set(-0.25, 0, 0);
     } else if (moving) {
-      // Lively bouncy low-poly walk/run cycle
-      const bob = Math.abs(Math.sin(walkPhase)) * 0.14;
-      const swing = Math.sin(walkPhase) * Math.min(0.85, 0.35 + hSpeed * 0.045);
+      const bob = rig.hoverMode !== 'none' ? floatOffset : Math.abs(Math.sin(walkPhase)) * 0.14;
+      const swing = rig.hoverMode === 'hoverboard' ? 0.18 : Math.sin(walkPhase) * Math.min(0.85, 0.35 + hSpeed * 0.045);
       rig.bodyPivot.position.y = bob;
-      rig.bodyPivot.rotation.set(Math.min(0.2, hSpeed * 0.012), 0, Math.cos(walkPhase) * 0.06);
+      rig.bodyPivot.rotation.set(Math.min(0.22, hSpeed * 0.012), 0, Math.cos(walkPhase) * 0.06);
       rig.bodyPivot.scale.set(1, 1, 1);
       rig.leftArm.rotation.set(swing, 0, 0.14);
       rig.rightArm.rotation.set(-swing, 0, -0.14);
       rig.leftLeg.rotation.set(-swing * 1.05, 0, 0);
       rig.rightLeg.rotation.set(swing * 1.05, 0, 0);
     } else {
-      // Idle heroic breathing
       const breathe = Math.sin(timeSec * 2.8);
-      rig.bodyPivot.position.y = breathe * 0.03;
+      rig.bodyPivot.position.y = floatOffset + breathe * 0.03;
       rig.bodyPivot.rotation.set(0, 0, 0);
       rig.bodyPivot.scale.set(1, 1 + breathe * 0.02, 1);
       rig.leftArm.rotation.set(0, 0, 0.12 + breathe * 0.04);
@@ -620,55 +998,120 @@ export class EntityInstancer {
       rig.rightLeg.rotation.set(0, 0, 0);
     }
 
-    // Apply character scale baseline from palette on top of squash/stretch
-    const baseScale = currState.characterId === 'Megachad' ? 1.32 : currState.characterId === 'SirOofie' ? 1.06 : 1.0;
-    rig.bodyPivot.scale.multiplyScalar(baseScale);
+    rig.bodyPivot.scale.multiplyScalar(rig.baseScale);
 
-    // Weapon attack recoil swing
     if (this.playerAttackSwing > 0) {
       rig.rightArm.rotation.x -= Math.sin(this.playerAttackSwing * Math.PI) * 1.15;
     }
 
-    // Character-specific signature animations:
+    // Character-specific signature animations across all 21 fighters!
     if (rig.tailPivot) {
-      // Fox bushy tail lively wag!
       rig.tailPivot.rotation.y = Math.sin(timeSec * (moving ? 11.5 : 4.2)) * (moving ? 0.42 : 0.22);
       rig.tailPivot.rotation.x = p1.isSliding ? -0.35 : 0.1;
     }
     if (rig.capePivot) {
-      // SirOofie crimson cape billows dynamically with speed!
       const speedBillow = Math.min(0.85, hSpeed * 0.048);
       rig.capePivot.rotation.x = 0.12 + speedBillow + Math.sin(timeSec * 9.0) * (0.06 + speedBillow * 0.18);
     }
     if (rig.boardPivot) {
-      // Calcium tilted chunky skateboard carve & spinning wheels!
-      this.wheelAngle += hSpeed * dt * 4.5;
-      rig.boardPivot.rotation.set(
-        p1.isSliding ? -0.18 : Math.sin(timeSec * 4) * 0.04,
-        p1.railId !== null ? 0.35 : 0.08,
-        Math.sin(timeSec * 6) * Math.min(0.18, hSpeed * 0.012),
-      );
-      for (let w = 0; w < rig.wheelPivots.length; w++) {
-        rig.wheelPivots[w]!.rotation.x = this.wheelAngle;
+      if (rig.hoverMode === 'hoverboard') {
+        // TonyMcZoom glowing neon hoverboard carving!
+        rig.boardPivot.rotation.set(
+          p1.isSliding ? -0.22 : Math.sin(timeSec * 5.2) * 0.06,
+          p1.railId !== null ? 0.42 : 0.14,
+          Math.sin(timeSec * 6.5) * Math.min(0.24, 0.05 + hSpeed * 0.015),
+        );
+      } else {
+        // Calcium tilted chunky skateboard + spinning wheels!
+        this.wheelAngle += hSpeed * dt * 4.5;
+        rig.boardPivot.rotation.set(
+          p1.isSliding ? -0.18 : Math.sin(timeSec * 4) * 0.04,
+          p1.railId !== null ? 0.35 : 0.08,
+          Math.sin(timeSec * 6) * Math.min(0.18, hSpeed * 0.012),
+        );
+        for (let w = 0; w < rig.wheelPivots.length; w++) {
+          rig.wheelPivots[w]!.rotation.x = this.wheelAngle;
+        }
       }
     }
+    if (rig.leftWingPivot && rig.rightWingPivot) {
+      // Birdo gliding pose when airborne + lively wing flap!
+      const isGliding = !p1.grounded && p1.vel.y < -0.5;
+      const flap = isGliding ? 0.08 + Math.sin(timeSec * 6.0) * 0.08 : Math.sin(timeSec * (moving ? 12 : 4)) * (moving ? 0.35 : 0.14);
+      const flare = isGliding ? 0.35 : 0;
+      rig.leftWingPivot.rotation.set(0, -flare, flap);
+      rig.rightWingPivot.rotation.set(0, flare, -flap);
+    }
+    if (rig.isDiceHead) {
+      // Dicehead giant tumbling D6 head!
+      const spin = this.diceSpinBoost > 0.01 ? timeSec * 14.0 : Math.sin(timeSec * 2.2) * 0.12;
+      rig.headPivot.rotation.set(
+        this.diceSpinBoost * Math.sin(timeSec * 11.0) * 0.65,
+        spin,
+        this.diceSpinBoost * Math.cos(timeSec * 9.0) * 0.45,
+      );
+    } else {
+      rig.headPivot.rotation.set(0, 0, 0);
+    }
     if (rig.auraRing) {
-      // Megachad glowing golden Aura Ring + Flex flare!
       const flexing = p1.invulnTimer > 0;
       rig.auraRing.rotation.z = timeSec * (flexing ? 5.2 : 1.8);
       const auraScale = flexing ? 1.35 + Math.sin(timeSec * 22) * 0.12 : 1.0 + Math.sin(timeSec * 3.5) * 0.06;
       rig.auraRing.scale.setScalar(auraScale);
       if (flexing) {
-        // Heroic bicep flex pose!
         rig.leftArm.rotation.set(-0.6, 0, 1.15);
         rig.rightArm.rotation.set(-0.6, 0, -1.15);
       }
     }
 
-    // Player hit-flash
     const flashAmt = this.playerHitFlash > 0 ? Math.min(1, this.playerHitFlash * 5) : 0;
     for (let m = 0; m < rig.toonMaterials.length; m++) {
       setMkToonHitFlash(rig.toonMaterials[m]!, flashAmt);
+    }
+  }
+
+  private animateBossRig(
+    rig: ArticulatedBossRig,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    scale: number,
+    timeSec: number,
+    entityId: number,
+    flashRem: number,
+    hover: boolean,
+    shieldActive = false,
+  ): void {
+    rig.root.visible = true;
+    const stomp = hover
+      ? 0.8 + Math.sin(timeSec * 2.6 + entityId) * 0.45
+      : Math.abs(Math.sin(timeSec * 4.5 + entityId)) * 0.22;
+    rig.root.position.set(x, y + stomp, z);
+    rig.root.rotation.set(0, yaw, Math.sin(timeSec * 3.6) * 0.04);
+    rig.root.scale.setScalar(scale);
+    rig.leftArm.rotation.x = Math.sin(timeSec * 4.2 + entityId) * 0.52;
+    rig.rightArm.rotation.x = -Math.sin(timeSec * 4.2 + entityId) * 0.52;
+    if (rig.kind === 'FinalBoss') {
+      rig.crownGroup.rotation.z = timeSec * 1.4;
+      if (rig.shieldDome) {
+        rig.shieldDome.visible = shieldActive;
+        if (shieldActive) {
+          rig.shieldDome.rotation.y = timeSec * 0.85;
+          const s = 1.0 + Math.sin(timeSec * 6.0) * 0.04;
+          rig.shieldDome.scale.setScalar(s);
+        }
+      }
+    } else if (rig.kind === 'BigBob' || rig.kind === 'Pharaoh') {
+      rig.crownGroup.rotation.y = timeSec * 1.6;
+      rig.crownGroup.position.y = (rig.kind === 'BigBob' ? 8.85 : 5.95) + Math.sin(timeSec * 3.2) * 0.22;
+    } else {
+      rig.crownGroup.rotation.y = Math.sin(timeSec * 1.8) * 0.08;
+    }
+
+    const flash = flashRem > 0 ? Math.min(1, flashRem * 10) : 0;
+    for (let m = 0; m < rig.toonMaterials.length; m++) {
+      setMkToonHitFlash(rig.toonMaterials[m]!, flash);
     }
   }
 
@@ -678,12 +1121,10 @@ export class EntityInstancer {
     alpha: number,
     timeSec: number,
   ): void {
-    // Reset all pool counts
-    for (const pool of this.enemyPools.values()) {
-      pool.count = 0;
+    for (let i = 0; i < this.enemyPoolList.length; i++) {
+      this.enemyPoolList[i]!.count = 0;
     }
 
-    // Map previous enemies by id in-place (reusing existing object refs, zero allocations)
     this.prevEnemyById.clear();
     const prevList = prevState.enemies;
     for (let i = 0; i < prevList.length; i++) {
@@ -692,15 +1133,29 @@ export class EntityInstancer {
     }
 
     let sawEntBoss = false;
-    const currList = currState.enemies;
+    let sawPharaohBoss = false;
+    let sawBigBob = false;
+    let sawFinalBoss = false;
+    this.finalBossActive = false;
 
+    // Check if FinalBoss has any active un-cleansed pylons (drives Boss Pylon Shield Dome!)
+    let hasActivePylon = false;
+    for (let i = 0; i < currState.pylons.length; i++) {
+      const py = currState.pylons[i]!;
+      if (py.active && !py.cleansed) {
+        hasActivePylon = true;
+        break;
+      }
+    }
+
+    const currList = currState.enemies;
     for (let i = 0; i < currList.length; i++) {
       const e = currList[i]!;
       const prev = this.prevEnemyById.get(e.id);
       const x = prev ? prev.pos.x + (e.pos.x - prev.pos.x) * alpha : e.pos.x;
       const y = prev ? prev.pos.y + (e.pos.y - prev.pos.y) * alpha : e.pos.y;
       const z = prev ? prev.pos.z + (e.pos.z - prev.pos.z) * alpha : e.pos.z;
-      // Prefer velocity heading when moving so enemies always face travel direction cleanly
+
       const velSq = e.vel.x * e.vel.x + e.vel.z * e.vel.z;
       const yaw =
         velSq > 0.09
@@ -712,38 +1167,79 @@ export class EntityInstancer {
       const arch = this.assets.builtIn.normalizeEnemyArchetype(e.enemyId);
       const flashRem = this.hitFlashTimers.get(e.id) ?? 0;
 
-      // Special articulated rig for Forest Stage Boss: EntStage1 (Lil Bark)
-      if (arch === 'EntStage1' && !sawEntBoss) {
+      // 1. Forest Ent Stage Bosses (EntStage1/2/3)
+      if ((arch === 'EntStage1' || arch === 'EntStage2' || arch === 'EntStage3') && !sawEntBoss) {
         sawEntBoss = true;
-        if (!this.entBossRig) {
-          this.entBossRig = this.assets.builtIn.buildEntBossRig();
+        const tier = arch === 'EntStage3' ? 3 : arch === 'EntStage2' ? 2 : 1;
+        if (!this.entBossRig || this.entBossTier !== tier) {
+          if (this.entBossRig) {
+            this.rootGroup.remove(this.entBossRig.root);
+            this.entBossRig.dispose();
+          }
+          this.entBossRig = this.assets.builtIn.buildEntBossRig(tier);
+          this.entBossTier = tier;
           this.rootGroup.add(this.entBossRig.root);
         }
-        this.entBossRig.root.visible = true;
-        const bossScale = Math.max(0.85, e.radius / 2.2);
-        const stomp = Math.abs(Math.sin(timeSec * 4.5 + e.id));
-        this.entBossRig.root.position.set(x, y + stomp * 0.22, z);
-        this.entBossRig.root.rotation.set(0, yaw, Math.sin(timeSec * 4.5) * 0.05);
-        this.entBossRig.root.scale.setScalar(bossScale);
-        this.entBossRig.leftArm.rotation.x = Math.sin(timeSec * 4.5) * 0.52;
-        this.entBossRig.rightArm.rotation.x = -Math.sin(timeSec * 4.5) * 0.52;
-        this.entBossRig.crownGroup.rotation.y = Math.sin(timeSec * 1.8) * 0.08;
-        this.entBossHitFlash = flashRem > 0 ? Math.min(1, flashRem * 10) : 0;
-        for (let m = 0; m < this.entBossRig.toonMaterials.length; m++) {
-          setMkToonHitFlash(this.entBossRig.toonMaterials[m]!, this.entBossHitFlash);
+        this.animateBossRig(this.entBossRig, x, y, z, yaw, Math.max(0.85, e.radius / 2.2), timeSec, e.id, flashRem, false);
+        continue;
+      }
+
+      // 2. Desert Anubis Pharaoh Bosses (Pharaoh1/2/3)
+      if ((arch === 'Pharaoh1' || arch === 'Pharaoh2' || arch === 'Pharaoh3') && !sawPharaohBoss) {
+        sawPharaohBoss = true;
+        const tier = arch === 'Pharaoh3' ? 3 : arch === 'Pharaoh2' ? 2 : 1;
+        if (!this.pharaohBossRig || this.pharaohBossTier !== tier) {
+          if (this.pharaohBossRig) {
+            this.rootGroup.remove(this.pharaohBossRig.root);
+            this.pharaohBossRig.dispose();
+          }
+          this.pharaohBossRig = this.assets.builtIn.buildPharaohBossRig(tier);
+          this.pharaohBossTier = tier;
+          this.rootGroup.add(this.pharaohBossRig.root);
         }
+        this.animateBossRig(this.pharaohBossRig, x, y, z, yaw, Math.max(0.9, e.radius / 1.8), timeSec, e.id, flashRem, false);
+        continue;
+      }
+
+      // 3. Graveyard Big Bob (GhostKing)
+      if (arch === 'GhostKing' && !sawBigBob) {
+        sawBigBob = true;
+        if (!this.bigBobRig) {
+          this.bigBobRig = this.assets.builtIn.buildBigBobRig();
+          this.rootGroup.add(this.bigBobRig.root);
+        }
+        this.animateBossRig(this.bigBobRig, x, y, z, yaw, Math.max(0.95, e.radius / 2.6), timeSec, e.id, flashRem, true);
+        continue;
+      }
+
+      // 4. Obsidian Citadel Final Boss
+      if (arch === 'FinalBoss' && !sawFinalBoss) {
+        sawFinalBoss = true;
+        this.finalBossActive = true;
+        const bossScale = Math.max(1.0, e.radius / 2.0);
+        this.finalBossWorldPos.set(x, y + 3.5 * bossScale, z);
+        if (!this.finalBossRig) {
+          this.finalBossRig = this.assets.builtIn.buildFinalBossRig();
+          this.rootGroup.add(this.finalBossRig.root);
+        }
+        this.animateBossRig(this.finalBossRig, x, y, z, yaw, bossScale, timeSec, e.id, flashRem, false, hasActivePylon);
         continue;
       }
 
       const pool = this.enemyPools.get(arch) ?? this.enemyPools.get('Goblin');
       if (!pool || pool.count >= pool.capacity) continue;
 
-      // Expressive low-poly walk wobble / slime bounce / ghost hover!
       const phase = timeSec * (e.isBoss ? 5.2 : 8.5) + e.id * 1.37;
-      const isSlime = arch === 'Slime';
-      const isGhost = arch.startsWith('Ghost');
-      const hopY = isGhost ? 0.38 + Math.sin(phase * 0.65) * 0.22 : Math.abs(Math.sin(phase)) * 0.16;
-      const rollZ = isGhost ? Math.sin(phase * 0.5) * 0.08 : Math.sin(phase) * 0.1;
+      const isSlime = arch === 'Slime' || arch === 'Frog';
+      const isFlying =
+        arch.startsWith('Ghost') ||
+        arch === 'GreaterGhost' ||
+        arch === 'Bee' ||
+        arch === 'Wisp' ||
+        arch === 'Head';
+      const isRolling = arch === 'Tumblebone';
+      const hopY = isFlying ? 0.55 + Math.sin(phase * 0.65) * 0.28 : Math.abs(Math.sin(phase)) * 0.16;
+      const rollZ = isFlying ? Math.sin(phase * 0.5) * 0.08 : Math.sin(phase) * 0.1;
 
       const baseScale = e.isBoss
         ? Math.max(1.25, e.radius / 1.1)
@@ -752,12 +1248,14 @@ export class EntityInstancer {
           : Math.max(0.75, e.radius / 0.72);
       const squashY = isSlime ? 1.0 + Math.sin(phase * 1.4) * 0.18 : 1.0;
       const squashXZ = isSlime ? 1.0 / Math.sqrt(squashY) : 1.0;
-
-      // Hit squash punch
       const hitPunch = flashRem > 0 ? 1.12 : 1.0;
 
       this._pos.set(x, y + hopY, z);
-      this._euler.set(0, yaw, rollZ);
+      if (isRolling) {
+        this._euler.set(timeSec * 8.0 + e.id, yaw, 0);
+      } else {
+        this._euler.set(0, yaw, rollZ);
+      }
       this._quat.setFromEuler(this._euler);
       this._scale.set(
         baseScale * squashXZ * hitPunch,
@@ -770,9 +1268,8 @@ export class EntityInstancer {
       pool.main.setMatrixAt(idx, this._mat);
       pool.outline.setMatrixAt(idx, this._mat);
 
-      // Per-instance tint: white hit-flash boost > debuff color > elite glow > clean neutral
       if (flashRem > 0) {
-        this._col.setRGB(3.2, 3.1, 2.9); // bright arcade white hit-flash!
+        this._col.setRGB(3.2, 3.1, 2.9);
       } else if (e.debuffs.length > 0) {
         const d = e.debuffs[0]!.type;
         if (d === 'Freeze') this._col.setHex(0x80f5ff);
@@ -781,6 +1278,12 @@ export class EntityInstancer {
         else if (d === 'Charm') this._col.setHex(0xff80ec);
         else if (d === 'Bloodmark') this._col.setHex(0xff6b81);
         else this._col.setHex(0xffffff);
+      } else if (arch === 'Frog') {
+        const lid = this.lowerCached(e.enemyId);
+        this._col.setHex(lid.includes('red') ? 0xff6b6b : lid.includes('blue') ? 0x60a5fa : 0xffffff);
+      } else if (arch === 'GhostGrave') {
+        const lid = this.lowerCached(e.enemyId);
+        this._col.setHex(lid.includes('4') ? 0xff70a6 : lid.includes('3') ? 0xc084fc : lid.includes('2') ? 0x70f5ff : 0xffffff);
       } else if (e.isElite) {
         this._col.setHex(0xffe699);
       } else {
@@ -789,12 +1292,13 @@ export class EntityInstancer {
       pool.main.setColorAt(idx, this._col);
     }
 
-    if (this.entBossRig && !sawEntBoss) {
-      this.entBossRig.root.visible = false;
-    }
+    if (this.entBossRig && !sawEntBoss) this.entBossRig.root.visible = false;
+    if (this.pharaohBossRig && !sawPharaohBoss) this.pharaohBossRig.root.visible = false;
+    if (this.bigBobRig && !sawBigBob) this.bigBobRig.root.visible = false;
+    if (this.finalBossRig && !sawFinalBoss) this.finalBossRig.root.visible = false;
 
-    // Flush updated counts & buffers
-    for (const pool of this.enemyPools.values()) {
+    for (let i = 0; i < this.enemyPoolList.length; i++) {
+      const pool = this.enemyPoolList[i]!;
       pool.main.count = pool.count;
       pool.outline.count = pool.count;
       if (pool.count > 0) {
@@ -806,8 +1310,8 @@ export class EntityInstancer {
   }
 
   private syncPickups(currState: Readonly<SimState>, timeSec: number): void {
-    for (const pool of this.pickupPools.values()) {
-      pool.count = 0;
+    for (let i = 0; i < this.pickupPoolList.length; i++) {
+      this.pickupPoolList[i]!.count = 0;
     }
 
     const list = currState.pickups;
@@ -818,76 +1322,20 @@ export class EntityInstancer {
       let sc = 1.0;
 
       switch (pk.kind) {
-        case 'xp_small':
-          poolKey = 'gem';
-          hex = 0x4df5ff;
-          sc = 0.85;
-          break;
-        case 'xp_medium':
-          poolKey = 'gem';
-          hex = 0x52ff8a;
-          sc = 1.1;
-          break;
-        case 'xp_large':
-          poolKey = 'gem';
-          hex = 0xff5cf4;
-          sc = 1.42;
-          break;
-        case 'gold':
-          poolKey = 'coin';
-          hex = 0xffd23f;
-          sc = 1.0;
-          break;
-        case 'silver':
-          poolKey = 'coin';
-          hex = 0xdbe6f2;
-          sc = 1.12;
-          break;
-        case 'health':
-          poolKey = 'heart';
-          hex = 0xff3b5c;
-          sc = 1.15;
-          break;
-        case 'magnet':
-          poolKey = 'orb';
-          hex = 0x38bdf8;
-          sc = 1.25;
-          break;
-        case 'nuke':
-          poolKey = 'orb';
-          hex = 0xff4d2e;
-          sc = 1.35;
-          break;
-        case 'freeze_clock':
-          poolKey = 'orb';
-          hex = 0x80faff;
-          sc = 1.25;
-          break;
-        case 'rage':
-          poolKey = 'orb';
-          hex = 0xff2e54;
-          sc = 1.25;
-          break;
-        case 'haste':
-          poolKey = 'orb';
-          hex = 0xffe45e;
-          sc = 1.25;
-          break;
-        case 'stonks':
-          poolKey = 'coin';
-          hex = 0x52ff8a;
-          sc = 1.3;
-          break;
-        case 'shield':
-          poolKey = 'orb';
-          hex = 0x5cf7ff;
-          sc = 1.25;
-          break;
-        default:
-          poolKey = 'orb';
-          hex = 0xffd84d;
-          sc = 1.3;
-          break;
+        case 'xp_small': poolKey = 'gem'; hex = 0x4df5ff; sc = 0.85; break;
+        case 'xp_medium': poolKey = 'gem'; hex = 0x52ff8a; sc = 1.1; break;
+        case 'xp_large': poolKey = 'gem'; hex = 0xff5cf4; sc = 1.42; break;
+        case 'gold': poolKey = 'coin'; hex = 0xffd23f; sc = 1.0; break;
+        case 'silver': poolKey = 'coin'; hex = 0xdbe6f2; sc = 1.12; break;
+        case 'health': poolKey = 'heart'; hex = 0xff3b5c; sc = 1.15; break;
+        case 'magnet': poolKey = 'orb'; hex = 0x38bdf8; sc = 1.25; break;
+        case 'nuke': poolKey = 'orb'; hex = 0xff4d2e; sc = 1.35; break;
+        case 'freeze_clock': poolKey = 'orb'; hex = 0x80faff; sc = 1.25; break;
+        case 'rage': poolKey = 'orb'; hex = 0xff2e54; sc = 1.25; break;
+        case 'haste': poolKey = 'orb'; hex = 0xffe45e; sc = 1.25; break;
+        case 'stonks': poolKey = 'coin'; hex = 0x52ff8a; sc = 1.3; break;
+        case 'shield': poolKey = 'orb'; hex = 0x5cf7ff; sc = 1.25; break;
+        default: poolKey = 'orb'; hex = 0xffd84d; sc = 1.3; break;
       }
 
       const pool = this.pickupPools.get(poolKey);
@@ -909,7 +1357,8 @@ export class EntityInstancer {
       pool.main.setColorAt(idx, this._col);
     }
 
-    for (const pool of this.pickupPools.values()) {
+    for (let i = 0; i < this.pickupPoolList.length; i++) {
+      const pool = this.pickupPoolList[i]!;
       pool.main.count = pool.count;
       pool.outline.count = pool.count;
       if (pool.count > 0) {
@@ -926,8 +1375,8 @@ export class EntityInstancer {
     alpha: number,
     timeSec: number,
   ): void {
-    for (const pool of this.projectilePools.values()) {
-      pool.count = 0;
+    for (let i = 0; i < this.projectilePoolList.length; i++) {
+      this.projectilePoolList[i]!.count = 0;
     }
 
     this.prevProjById.clear();
@@ -938,6 +1387,7 @@ export class EntityInstancer {
     }
 
     const currList = currState.projectiles;
+    const pPos = currState.player.pos;
     for (let i = 0; i < currList.length; i++) {
       const pr = currList[i]!;
       const prevPos = this.prevProjById.get(pr.id);
@@ -951,8 +1401,29 @@ export class EntityInstancer {
 
       this._pos.set(x, y, z);
 
-      if (arch === 'bone' || arch === 'boulder') {
-        this._euler.set(timeSec * 9.0 + pr.id, timeSec * 12.0 + pr.id, timeSec * 6.0);
+      if (arch === 'banana') {
+        // Iconic horizontal spinning Bananarang crescent!
+        this._euler.set(0.15, timeSec * 16.0 + pr.id, 0);
+        this._quat.setFromEuler(this._euler);
+      } else if (arch === 'bone' || arch === 'boulder' || arch === 'dice' || arch === 'flask') {
+        // Expressive 3D tumbling dice / bone / boulder / flask!
+        this._euler.set(timeSec * 10.0 + pr.id, timeSec * 13.0 + pr.id, timeSec * 7.5);
+        this._quat.setFromEuler(this._euler);
+      } else if (arch === 'axe' || arch === 'scythe') {
+        // Cartwheeling battle axe / reaping scythe!
+        const heading = Math.atan2(pr.vel.x, pr.vel.z);
+        this._euler.set(timeSec * 15.0 + pr.id, heading, 0);
+        this._quat.setFromEuler(this._euler);
+      } else if (arch === 'aegis_shield') {
+        // Orbiting Aegis shield plates facing radially outward around player!
+        const outAngle = Math.atan2(x - pPos.x, z - pPos.z);
+        this._euler.set(0, outAngle, Math.sin(timeSec * 6.0 + pr.id) * 0.12);
+        this._quat.setFromEuler(this._euler);
+      } else if (arch === 'tornado_proj' || arch === 'blackhole_orb') {
+        this._euler.set(0, timeSec * 11.0 + pr.id, 0);
+        this._quat.setFromEuler(this._euler);
+      } else if (arch === 'mine') {
+        this._euler.set(0, timeSec * 1.5, 0);
         this._quat.setFromEuler(this._euler);
       } else {
         this._vel.set(pr.vel.x, pr.vel.y, pr.vel.z);
@@ -975,7 +1446,8 @@ export class EntityInstancer {
       pool.main.setColorAt(idx, this._col);
     }
 
-    for (const pool of this.projectilePools.values()) {
+    for (let i = 0; i < this.projectilePoolList.length; i++) {
+      const pool = this.projectilePoolList[i]!;
       pool.main.count = pool.count;
       pool.outline.count = pool.count;
       if (pool.count > 0) {
@@ -989,6 +1461,7 @@ export class EntityInstancer {
   private syncAreaEffects(currState: Readonly<SimState>, timeSec: number): void {
     const list = currState.areaEffects;
     const count = Math.min(list.length, AREA_EFFECT_POOL_CAPACITY);
+    const pPos = currState.player.pos;
 
     for (let i = 0; i < AREA_EFFECT_POOL_CAPACITY; i++) {
       const slot = this.areaSlots[i]!;
@@ -1004,23 +1477,38 @@ export class EntityInstancer {
       const r = Math.max(0.5, ae.radius);
       const frac = 1.0 - Math.max(0, Math.min(1, ae.lifeSec / Math.max(0.01, ae.maxLifeSec)));
       const isEnemyHazard = !ae.ownerIsPlayer;
+      const wid = this.lowerCached(ae.weaponId);
 
-      // Color by kind & ownership
+      // Determine vibrant weapon/element palette
       let hex = 0xffd84d;
       if (isEnemyHazard) {
-        hex = 0xff2e4c; // Pulsing crimson boss telegraph (e.g. Lil Bark RootSpikes!)
-      } else if (ae.kind === 'aura') {
-        hex = 0xffd84d;
+        hex = 0xff2e4c;
+      } else if (wid.includes('noodle')) {
+        hex = 0xff5cf4;
+      } else if (wid.includes('dragon')) {
+        hex = 0xff621f;
+      } else if (wid.includes('frost') || ae.element === 'Ice') {
+        hex = 0x70f5ff;
+      } else if (wid.includes('poison') || ae.element === 'Poison') {
+        hex = 0x6eff57;
+      } else if (wid.includes('flame') || wid.includes('fire') || ae.element === 'Fire') {
+        hex = 0xff6b24;
+      } else if (ae.kind === 'blackhole' || wid.includes('blackhole')) {
+        hex = 0xb938ff;
+      } else if (ae.kind === 'tornado' || wid.includes('tornado')) {
+        hex = 0x99f6ff;
+      } else if (ae.kind === 'mine' || wid.includes('mine')) {
+        hex = 0xff2644;
       } else if (ae.kind === 'beam') {
         hex = 0x5cf7ff;
-      } else if (ae.kind === 'pool') {
-        hex = ae.element === 'Fire' ? 0xff621f : ae.element === 'Ice' ? 0x70f5ff : 0x76f562;
-      } else if (ae.kind === 'blackhole') {
-        hex = 0xb938ff;
-      } else if (ae.kind === 'tornado') {
-        hex = 0x99f6ff;
       } else if (ae.kind === 'nova') {
         hex = 0xff9f43;
+      } else if (wid.includes('katana')) {
+        hex = 0x5cf7ff;
+      } else if (wid.includes('corrupt')) {
+        hex = 0xc05eff;
+      } else if (wid.includes('scythe')) {
+        hex = 0x4dff9e;
       }
 
       (slot.ringMat.uniforms.uBaseColor!.value as THREE.Color).setHex(hex);
@@ -1031,26 +1519,110 @@ export class EntityInstancer {
       const pulse = 1.0 + Math.sin(timeSec * (isEnemyHazard ? 18 : 7)) * 0.05;
       const ringScale = ae.kind === 'nova' ? r * (0.25 + frac * 0.85) : r * pulse;
       slot.ring.scale.set(ringScale, 1, ringScale);
-      slot.disc.scale.set(r * (isEnemyHazard ? 0.3 + frac * 0.7 : 0.96), 1, r * (isEnemyHazard ? 0.3 + frac * 0.7 : 0.96));
+      const discScale = r * (isEnemyHazard ? 0.3 + frac * 0.7 : ae.kind === 'pool' ? 0.94 + Math.sin(timeSec * 8 + ae.id) * 0.05 : 0.96);
+      slot.disc.scale.set(discScale, 1, discScale);
+      slot.discMat.uniforms.uOpacity!.value = ae.kind === 'pool' ? 0.42 : isEnemyHazard ? 0.32 : 0.24;
 
-      // Beam / Tornado sky column
-      if (ae.kind === 'beam' || ae.kind === 'tornado') {
+      // Reset optional sub-meshes cleanly
+      slot.column.visible = false;
+      slot.column.position.set(0, 0, 0);
+      slot.column.quaternion.identity();
+      slot.coreMesh.visible = false;
+      slot.accretionRing.visible = false;
+      slot.spikes.visible = false;
+      slot.slashMesh.visible = false;
+
+      // 1. SpaceNoodle Tether Beam (connects player <-> target position cleanly!)
+      if (wid.includes('noodle')) {
         slot.column.visible = true;
-        slot.column.scale.set(r * 0.65, Math.max(4, ae.height || 14), r * 0.65);
-        slot.column.rotation.y = timeSec * 8.0;
+        this._vecA.set(pPos.x - ae.pos.x, pPos.y + 1.3 - ae.pos.y, pPos.z - ae.pos.z);
+        const len = Math.max(0.8, this._vecA.length());
+        this._vecB.copy(this._vecA).normalize();
+        slot.column.position.set(this._vecA.x * 0.5, this._vecA.y * 0.5, this._vecA.z * 0.5);
+        this._quat.setFromUnitVectors(this._yAxis, this._vecB);
+        slot.column.quaternion.copy(this._quat);
+        slot.column.position.addScaledVector(this._vecB, -len * 0.5);
+        const thickness = 0.35 + Math.sin(timeSec * 24 + ae.id) * 0.09;
+        slot.column.scale.set(thickness, len, thickness);
+        (slot.colMat.uniforms.uBaseColor!.value as THREE.Color).setHex(0xff66f5);
+        (slot.colMat.uniforms.uEmissive!.value as THREE.Color).setHex(0x5cf7ff);
+      } else if (ae.kind === 'beam' || ae.kind === 'tornado') {
+        // Sky-smite lightning / Sniper beam / Tornado cyclone funnel!
+        slot.column.visible = true;
+        const h = Math.max(4, ae.height || (ae.kind === 'tornado' ? 11 : 14));
+        slot.column.scale.set(r * (ae.kind === 'tornado' ? 0.85 : 0.55), h, r * (ae.kind === 'tornado' ? 0.85 : 0.55));
+        slot.column.rotation.set(0, timeSec * (ae.kind === 'tornado' ? 12.0 : 8.0), 0);
         (slot.colMat.uniforms.uBaseColor!.value as THREE.Color).setHex(hex);
         (slot.colMat.uniforms.uEmissive!.value as THREE.Color).setHex(hex);
-      } else {
-        slot.column.visible = false;
+        if (ae.kind === 'tornado') {
+          slot.accretionRing.visible = true;
+          slot.accretionRing.position.set(0, 1.4, 0);
+          slot.accretionRing.rotation.set(0, timeSec * 10.0, 0);
+          slot.accretionRing.scale.setScalar(r * 0.9);
+          (slot.accretionMat.uniforms.uBaseColor!.value as THREE.Color).setHex(0xd8faff);
+          (slot.accretionMat.uniforms.uEmissive!.value as THREE.Color).setHex(0x5cf7ff);
+        }
       }
 
-      // Enemy hazard RootSpikes erupting after warning telegraph fills!
+      // 2. Black Hole Gravity Vortex (dark obsidian event-horizon + swirling amethyst accretion torus!)
+      if (ae.kind === 'blackhole' || wid.includes('blackhole')) {
+        slot.coreMesh.visible = true;
+        slot.coreMesh.position.set(0, 1.45, 0);
+        slot.coreMesh.rotation.set(timeSec * 2.5, timeSec * 4.0, 0);
+        const coreSc = Math.max(0.9, r * 0.42) * (1.0 + Math.sin(timeSec * 12) * 0.08);
+        slot.coreMesh.scale.setScalar(coreSc);
+        (slot.coreMat.uniforms.uBaseColor!.value as THREE.Color).setHex(0x0b0414);
+        (slot.coreMat.uniforms.uEmissive!.value as THREE.Color).setHex(0x5b189a);
+
+        slot.accretionRing.visible = true;
+        slot.accretionRing.position.set(0, 1.45, 0);
+        slot.accretionRing.rotation.set(0.32, timeSec * 7.5, 0.25);
+        slot.accretionRing.scale.setScalar(Math.max(1.1, r * 0.72));
+        (slot.accretionMat.uniforms.uBaseColor!.value as THREE.Color).setHex(0xd946ef);
+        (slot.accretionMat.uniforms.uEmissive!.value as THREE.Color).setHex(0xb938ff);
+      }
+
+      // 3. Mines Blinking Trap (metallic base + pulsing blinking red LED core!)
+      if (ae.kind === 'mine' || wid.includes('mine')) {
+        slot.coreMesh.visible = true;
+        slot.coreMesh.position.set(0, 0.28, 0);
+        slot.coreMesh.rotation.set(0, timeSec * 2.0, 0);
+        slot.coreMesh.scale.set(0.95, 0.45, 0.95);
+        const blink = Math.sin(timeSec * 14 + ae.id) > 0;
+        (slot.coreMat.uniforms.uBaseColor!.value as THREE.Color).setHex(blink ? 0xff2644 : 0x334155);
+        (slot.coreMat.uniforms.uEmissive!.value as THREE.Color).setHex(blink ? 0xff2644 : 0x450a0a);
+      }
+
+      // 4. FrostWalker Expanding Ice Nova Crystal Spikes!
+      if (!isEnemyHazard && (wid.includes('frost') || (ae.kind === 'nova' && ae.element === 'Ice'))) {
+        slot.spikes.visible = true;
+        slot.spikes.scale.set(r * 0.65, (1.0 - frac * 0.45) * 1.1, r * 0.65);
+        (slot.spikeMat.uniforms.uBaseColor!.value as THREE.Color).setHex(0xa6f7ff);
+        (slot.spikeMat.uniforms.uEmissive!.value as THREE.Color).setHex(0x38e8ff);
+      }
+
+      // 5. Melee Slash Arc (Sword, Katana, HeroSword, CorruptedSword, Scythe, DragonsBreath)
+      if (
+        !isEnemyHazard &&
+        (wid.includes('sword') || wid.includes('katana') || wid.includes('scythe') || wid.includes('dragon'))
+      ) {
+        slot.slashMesh.visible = true;
+        slot.slashMesh.scale.setScalar(r * (0.7 + frac * 0.45));
+        slot.slashMesh.rotation.y = timeSec * 10.0 + ae.id;
+        (slot.slashMat.uniforms.uBaseColor!.value as THREE.Color).setHex(hex);
+        (slot.slashMat.uniforms.uEmissive!.value as THREE.Color).setHex(hex);
+        slot.slashMat.uniforms.uOpacity!.value = Math.max(0.15, (1 - frac) * 0.9);
+      }
+
+      // 6. Enemy Hazard Spikes / SandPillars / GhostSpikes erupting after warning telegraph fills!
       if (isEnemyHazard && frac > 0.55) {
         slot.spikes.visible = true;
         const erupt = Math.min(1, (frac - 0.55) / 0.25);
-        slot.spikes.scale.set(r * 0.48, erupt * 1.4, r * 0.48);
-      } else {
-        slot.spikes.visible = false;
+        slot.spikes.scale.set(r * 0.48, erupt * 1.55, r * 0.48);
+        const hazardCol =
+          currState.mapId === 'Desert' ? 0xd99642 : currState.mapId === 'Graveyard' ? 0x9b5de5 : 0x7a482b;
+        (slot.spikeMat.uniforms.uBaseColor!.value as THREE.Color).setHex(hazardCol);
+        (slot.spikeMat.uniforms.uEmissive!.value as THREE.Color).setHex(0xff3b5c);
       }
     }
   }
@@ -1068,6 +1640,7 @@ export class EntityInstancer {
       let slot = this.interactableSlots.get(it.id);
 
       if (!slot || slot.kind !== it.kind || slot.variant !== variant || slot.used !== it.used) {
+        const hadSlot = slot !== undefined;
         if (slot) {
           this.rootGroup.remove(slot.mesh);
           slot.mainMat.dispose();
@@ -1094,29 +1667,25 @@ export class EntityInstancer {
         mesh.add(outline);
         this.rootGroup.add(mesh);
 
-        slot = {
-          id: it.id,
-          kind: it.kind,
-          variant,
-          used: it.used,
-          mesh,
-          outline,
-          mainMat,
-          outlineMat,
-        };
-        this.interactableSlots.set(it.id, slot);
+        const nextSlot: InteractableSlot = { id: it.id, kind: it.kind, variant, used: it.used, mesh, outline, mainMat, outlineMat };
+        this.interactableSlots.set(it.id, nextSlot);
+        if (hadSlot) {
+          const idx = this.interactableSlotList.indexOf(slot!);
+          if (idx >= 0) this.interactableSlotList[idx] = nextSlot;
+          else this.interactableSlotList.push(nextSlot);
+        } else {
+          this.interactableSlotList.push(nextSlot);
+        }
+        slot = nextSlot;
       }
 
-      // Hide broken pots cleanly
       slot.mesh.visible = !(it.kind === 'Pot' && it.used);
       slot.mesh.position.set(it.pos.x, it.pos.y, it.pos.z);
 
-      // Gentle idle hover/spin on floating rune shrines
       if (it.kind === 'ChargeShrine' && !it.used) {
         slot.mesh.rotation.y = Math.sin(timeSec * 0.8 + it.id) * 0.12;
       }
 
-      // ChargeShrine pulsing translucent ground ring + live radial charge progress fill!
       if (it.kind === 'ChargeShrine' && !it.used && shrineRingIdx < SHRINE_RING_POOL_CAPACITY) {
         const ringSlot = this.shrineRings[shrineRingIdx++]!;
         ringSlot.group.visible = true;
@@ -1139,24 +1708,25 @@ export class EntityInstancer {
       }
     }
 
-    // Remove despawned interactables
-    for (const [id, slot] of this.interactableSlots) {
-      if (!this.activeInteractableIds.has(id)) {
+    for (let i = this.interactableSlotList.length - 1; i >= 0; i--) {
+      const slot = this.interactableSlotList[i]!;
+      if (!this.activeInteractableIds.has(slot.id)) {
         this.rootGroup.remove(slot.mesh);
         slot.mainMat.dispose();
         slot.outlineMat.dispose();
-        this.interactableSlots.delete(id);
+        this.interactableSlots.delete(slot.id);
+        const last = this.interactableSlotList.pop()!;
+        if (i < this.interactableSlotList.length) this.interactableSlotList[i] = last;
       }
     }
 
-    // Hide unused shrine rings
     for (let i = shrineRingIdx; i < SHRINE_RING_POOL_CAPACITY; i++) {
       this.shrineRings[i]!.group.visible = false;
     }
   }
 
-  private syncBossPortalAndPylons(currState: Readonly<SimState>, timeSec: number): void {
-    // Swirling BossPortal archway
+  private syncBossPortalPylonsAndLamps(currState: Readonly<SimState>, dt: number, timeSec: number): void {
+    // 1. Swirling BossPortal archway
     if (currState.bossPortalOpen && currState.bossPortalPos) {
       this.bossPortalGroup.visible = true;
       this.bossPortalGroup.position.set(
@@ -1173,33 +1743,145 @@ export class EntityInstancer {
       this.bossPortalGroup.visible = false;
     }
 
-    // Boss Pylons (FinalBossMap)
+    // 2. FinalBossMap 11 Boss Pylons (rising pillar + radial charge ring + crimson beam + stolen-weapon holo!)
     const pylons = currState.pylons;
+    const pylonCount = Math.min(pylons.length, PYLON_POOL_CAPACITY);
     for (let i = 0; i < PYLON_POOL_CAPACITY; i++) {
-      const g = this.pylonMeshes[i]!;
-      if (i < pylons.length) {
-        const py = pylons[i]!;
-        g.visible = true;
-        g.position.set(py.pos.x, py.pos.y, py.pos.z);
-        const ring = g.children[1];
-        if (ring) {
-          ring.scale.set(py.radius, 1, py.radius);
-        }
+      const slot = this.pylonSlots[i]!;
+      if (i >= pylonCount) {
+        slot.group.visible = false;
+        slot.beamMesh.visible = false;
+        slot.riseOffset = -5.2;
+        continue;
+      }
+
+      const py = pylons[i]!;
+      slot.group.visible = true;
+      slot.group.position.set(py.pos.x, py.pos.y, py.pos.z);
+
+      // Smooth rise animation from floor when active or cleansed!
+      const targetRise = py.active || py.cleansed ? 0.0 : -4.6;
+      slot.riseOffset += (targetRise - slot.riseOffset) * Math.min(1, dt * 5.5);
+      slot.pillarMesh.position.y = slot.riseOffset;
+
+      const isCleansed = py.cleansed;
+      const isActive = py.active && !py.cleansed;
+      const hasStolen = py.stolenWeaponId !== null && !isCleansed;
+
+      // Color coding: Emerald when cleansed, pulsing crimson-magenta when active, dim violet when dormant
+      const pillarEmissive = isCleansed ? 0x1fc77e : isActive ? 0xff2644 : 0x3b186e;
+      (slot.pillarMat.uniforms.uEmissive!.value as THREE.Color).setHex(pillarEmissive);
+      slot.pillarMat.uniforms.uEmissiveIntensity!.value = isActive
+        ? 0.55 + Math.sin(timeSec * 8 + i) * 0.18
+        : isCleansed
+          ? 0.42
+          : 0.15;
+
+      // Ground radial charge ring filling smoothly with py.chargeProgress!
+      const r = Math.max(2.6, py.radius);
+      const ringPulse = isActive ? 1.0 + Math.sin(timeSec * 6.0 + i) * 0.04 : 1.0;
+      slot.outerRing.visible = isActive || isCleansed;
+      slot.outerRing.scale.set(r * ringPulse, 1, r * ringPulse);
+      const ringCol = isCleansed ? 0x4dff9e : hasStolen ? 0xffe45e : 0xff2ec4;
+      (slot.outerMat.uniforms.uBaseColor!.value as THREE.Color).setHex(ringCol);
+      (slot.outerMat.uniforms.uEmissive!.value as THREE.Color).setHex(ringCol);
+
+      const prog = isCleansed ? 1.0 : Math.max(0.06, Math.min(1, py.chargeProgress));
+      slot.fillDisc.visible = isActive || isCleansed;
+      slot.fillDisc.scale.set(r * prog, 1, r * prog);
+      const fillCol = isCleansed ? 0x4dff9e : 0xffd23f;
+      (slot.fillMat.uniforms.uBaseColor!.value as THREE.Color).setHex(fillCol);
+      (slot.fillMat.uniforms.uEmissive!.value as THREE.Color).setHex(fillCol);
+      slot.fillMat.uniforms.uOpacity!.value = isCleansed ? 0.22 : py.chargeProgress > 0.01 ? 0.44 : 0.16;
+
+      // Spinning stolen-weapon hologram above pylons holding a stolen weapon!
+      if (hasStolen) {
+        slot.holoGroup.visible = true;
+        slot.holoGroup.position.y = 7.4 + slot.riseOffset + Math.sin(timeSec * 4.5 + i) * 0.35;
+        slot.holoGroup.rotation.set(0, timeSec * 3.8 + i, Math.sin(timeSec * 3.0) * 0.15);
+        const hs = 1.0 + Math.sin(timeSec * 9.0 + i) * 0.1;
+        slot.holoGroup.scale.setScalar(hs);
       } else {
-        g.visible = false;
+        slot.holoGroup.visible = false;
+      }
+
+      // Pulsing crimson energy beam linking active pylon crystal -> Final Boss!
+      if (isActive && this.finalBossActive && slot.riseOffset > -2.5) {
+        slot.beamMesh.visible = true;
+        this._vecA.set(py.pos.x, py.pos.y + 6.05 + slot.riseOffset, py.pos.z);
+        this._vecB.subVectors(this.finalBossWorldPos, this._vecA);
+        const beamLen = Math.max(0.5, this._vecB.length());
+        this._mid.addVectors(this._vecA, this.finalBossWorldPos).multiplyScalar(0.5);
+        this._vecB.normalize();
+        this._quat.setFromUnitVectors(this._yAxis, this._vecB);
+
+        slot.beamMesh.position.copy(this._mid);
+        slot.beamMesh.quaternion.copy(this._quat);
+        const pulseW = 0.85 + Math.sin(timeSec * 16.0 + i * 1.1) * 0.25;
+        slot.beamMesh.scale.set(pulseW, beamLen, pulseW);
+      } else {
+        slot.beamMesh.visible = false;
+      }
+    }
+
+    // 3. Graveyard Big Bob Darkness Lamps (wrought-iron lanterns + warm golden light pools!)
+    const lamps = currState.darknessLamps;
+    const lampCount = Math.min(lamps.length, LAMP_POOL_CAPACITY);
+    const darkOn = currState.darknessActive;
+    for (let i = 0; i < LAMP_POOL_CAPACITY; i++) {
+      const slot = this.lampSlots[i]!;
+      if (i >= lampCount) {
+        slot.group.visible = false;
+        continue;
+      }
+
+      const lamp = lamps[i]!;
+      slot.group.visible = true;
+      slot.group.position.set(lamp.pos.x, lamp.pos.y, lamp.pos.z);
+
+      const lit = lamp.lit;
+      const r = Math.max(2.6, lamp.radius);
+      const prog = lit ? 1.0 : Math.max(0.05, Math.min(1, lamp.chargeProgress));
+
+      // Lantern flame & iron rim glow vividly when lit (especially during Big Bob's Darkness!)
+      const flamePulse = 1.0 + Math.sin(timeSec * 9.0 + i) * 0.14;
+      slot.flameMesh.scale.setScalar(lit ? 1.25 * flamePulse : 0.45);
+      slot.flameMesh.rotation.y = timeSec * 2.5 + i;
+      (slot.flameMat.uniforms.uBaseColor!.value as THREE.Color).setHex(lit ? 0xfff08a : 0x3b4254);
+      (slot.flameMat.uniforms.uEmissive!.value as THREE.Color).setHex(lit ? 0xffae19 : 0x1e2230);
+      slot.flameMat.uniforms.uEmissiveIntensity!.value = lit ? (darkOn ? 2.4 : 1.5) : 0.15;
+
+      (slot.postMat.uniforms.uEmissive!.value as THREE.Color).setHex(lit ? 0xffae19 : 0x2a1f45);
+      slot.postMat.uniforms.uEmissiveIntensity!.value = lit ? (darkOn ? 0.55 : 0.3) : 0.08;
+
+      // Ground light pool + charging ring
+      const ringCol = lit ? 0xffe45e : darkOn ? 0xb938ff : 0x6b5b95;
+      (slot.outerMat.uniforms.uBaseColor!.value as THREE.Color).setHex(ringCol);
+      (slot.outerMat.uniforms.uEmissive!.value as THREE.Color).setHex(ringCol);
+      slot.outerRing.scale.set(r, 1, r);
+
+      (slot.fillMat.uniforms.uBaseColor!.value as THREE.Color).setHex(lit ? 0xffe066 : 0xffb703);
+      (slot.fillMat.uniforms.uEmissive!.value as THREE.Color).setHex(lit ? 0xffae19 : 0xd97706);
+      slot.fillDisc.scale.set(r * prog, 1, r * prog);
+      slot.fillMat.uniforms.uOpacity!.value = lit ? (darkOn ? 0.52 : 0.34) : lamp.chargeProgress > 0.01 ? 0.32 : 0.08;
+
+      // Warm golden light cone beam shining down when lit!
+      slot.lightCone.visible = lit;
+      if (lit) {
+        const coneScale = (r / 2.8) * (0.95 + Math.sin(timeSec * 5.0 + i) * 0.05);
+        slot.lightCone.scale.set(coneScale, 1.0, coneScale);
+        slot.coneMat.uniforms.uOpacity!.value = darkOn ? 0.34 : 0.18;
       }
     }
   }
 
   public dispose(): void {
-    if (this.playerRig) {
-      this.playerRig.dispose();
-      this.playerRig = null;
-    }
-    if (this.entBossRig) {
-      this.entBossRig.dispose();
-      this.entBossRig = null;
-    }
+    if (this.playerRig) { this.playerRig.dispose(); this.playerRig = null; }
+    if (this.entBossRig) { this.entBossRig.dispose(); this.entBossRig = null; }
+    if (this.pharaohBossRig) { this.pharaohBossRig.dispose(); this.pharaohBossRig = null; }
+    if (this.bigBobRig) { this.bigBobRig.dispose(); this.bigBobRig = null; }
+    if (this.finalBossRig) { this.finalBossRig.dispose(); this.finalBossRig = null; }
+
     for (const pool of [
       ...this.enemyPools.values(),
       ...this.projectilePools.values(),
@@ -1212,14 +1894,18 @@ export class EntityInstancer {
       slot.ringMat.dispose();
       slot.discMat.dispose();
       slot.colMat.dispose();
+      slot.coreMat.dispose();
+      slot.accretionMat.dispose();
       slot.spikeMat.dispose();
+      slot.slashMat.dispose();
     }
     for (const g of this.areaGeometries) g.dispose();
-    for (const slot of this.interactableSlots.values()) {
+    for (const slot of this.interactableSlotList) {
       slot.mainMat.dispose();
       slot.outlineMat.dispose();
     }
     this.interactableSlots.clear();
+    this.interactableSlotList.length = 0;
     for (const sr of this.shrineRings) {
       sr.outerMat.dispose();
       sr.fillMat.dispose();
@@ -1227,7 +1913,25 @@ export class EntityInstancer {
     for (const g of this.shrineRingGeometries) g.dispose();
     for (const g of this.portalGeometries) g.dispose();
     for (const m of this.portalMaterials) m.dispose();
+
+    for (const p of this.pylonSlots) {
+      p.pillarMat.dispose();
+      p.outerMat.dispose();
+      p.fillMat.dispose();
+      p.beamMat.dispose();
+      p.holoMat.dispose();
+    }
     for (const g of this.pylonGeometries) g.dispose();
-    for (const m of this.pylonMaterials) m.dispose();
+    for (const m of this.pylonExtraMaterials) m.dispose();
+
+    for (const l of this.lampSlots) {
+      l.postMat.dispose();
+      l.flameMat.dispose();
+      l.outerMat.dispose();
+      l.fillMat.dispose();
+      l.coneMat.dispose();
+    }
+    for (const g of this.lampGeometries) g.dispose();
+    for (const m of this.lampExtraMaterials) m.dispose();
   }
 }

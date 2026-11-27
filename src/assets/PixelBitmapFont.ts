@@ -82,7 +82,11 @@ export type PixelIconKind =
   | 'heart'
   | 'bolt'
   | 'flame'
-  | 'key';
+  | 'key'
+  | 'lamp'
+  | 'shop'
+  | 'microwave'
+  | 'moai';
 
 const PIXEL_ICONS: Record<PixelIconKind, readonly number[]> = {
   skull: [
@@ -174,6 +178,42 @@ const PIXEL_ICONS: Record<PixelIconKind, readonly number[]> = {
     0b0011100,
     0b0010000,
     0b0011000,
+  ],
+  lamp: [
+    0b0011100,
+    0b0111110,
+    0b0101010,
+    0b0111110,
+    0b0011100,
+    0b0001000,
+    0b0111110,
+  ],
+  shop: [
+    0b1111111,
+    0b1010101,
+    0b0111110,
+    0b0100010,
+    0b0101010,
+    0b0111110,
+    0b0000000,
+  ],
+  microwave: [
+    0b1111111,
+    0b1000101,
+    0b1010111,
+    0b1000101,
+    0b1111111,
+    0b0100010,
+    0b0000000,
+  ],
+  moai: [
+    0b0111110,
+    0b1111111,
+    0b1011101,
+    0b0111110,
+    0b0110110,
+    0b0111110,
+    0b1111111,
   ],
 };
 

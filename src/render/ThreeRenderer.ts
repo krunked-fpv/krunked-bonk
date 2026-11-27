@@ -1,14 +1,19 @@
 /**
- * KRUNKEDBONK — Main Three.js MK-Toon Stylized Low-Poly 3D Renderer (Implements IRenderer)
+ * KRUNKEDBONK — Main Three.js MK-Toon Stylized Low-Poly 3D Renderer (Wave 2 Full Expansion)
  *
- * Orchestrates the complete Wave 1 visual pipeline:
- * - Exact StageForest1 lighting: FogExp2 (0.00, 0.48, 0.62) @ 0.0070, turquoise-azure
- *   sky dome, warm directional sun (1.00, 0.96, 0.84), ambient (0.75, 0.75, 0.75)
- * - Smooth 3rd-person orbit camera (z=11.0, terrain spring-arm pull-in) + 1st-person toggle
- * - Dynamic speed FOV boost (+0..12 deg on slide/bhop/grind) & MilkShake impact recoil
- * - Full RenderSettings support (fov, cameraMode, classic50HzSnap, outlineEnabled, celBands,
- *   grassQuality, damageNumbersEnabled, screenShakeIntensity, minimapVisible, pixelScale)
- * - ZERO per-frame allocations in render() hot path!
+ * Implements IRenderer with exact extracted oracle.json RGB lighting across ALL 8 stages:
+ * - StageForest1:   fog (0.00, 0.4824, 0.6157) @ 0.0070, ambient 0.7453, sun (1.00, 0.9569, 0.8392)
+ * - StageForest2:   fog (0.3843, 0.2824, 0.6235) @ 0.0070, ambient (0.70, 0.66, 0.89)
+ * - StageForest3:   fog (0.3020, 0.0784, 0.0784) @ 0.0070, ambient (0.85, 0.65, 0.65)
+ * - StageDesert1:   fog (0.9255, 0.8157, 0.5922) @ 0.0060, ambient 0.7453, sun (1.00, 0.9569, 0.8392)
+ * - StageDesert2:   fog (0.4227, 0.6211, 0.9434) @ 0.0060, ambient (0.4655, 0.5624, 0.95), sun (0.3647, 0.6353, 1.0)
+ * - StageDesert3:   fog (0.5765, 0.1882, 0.1882) @ 0.0060, ambient (0.82, 0.63, 0.62), sun (0.8784, 0.7412, 0.7176)
+ * - StageGraveyard: fog (0.4941, 0.4157, 0.6235) @ 0.0075, ambient 0.7453, sun (0.9451, 0.8431, 1.0)
+ * - FinalBossMap:   dramatic obsidian & ember-gold colosseum sky & fog @ 0.0050
+ *
+ * Also drives smooth dynamic Big Bob Darkness fog/sky squeeze, Blind challenge dark fog,
+ * The Floor is Lava molten floor tint, dynamic speed FOV, MilkShake recoil, and ZERO
+ * per-frame allocations in render()!
  */
 
 import * as THREE from 'three';
@@ -43,7 +48,7 @@ import { VfxPool } from './VfxPool';
 import { FloatingTextLayer } from './FloatingTextLayer';
 import { MinimapRenderer } from './MinimapRenderer';
 
-interface StageLightingPreset {
+export interface StageLightingPreset {
   fogR: number;
   fogG: number;
   fogB: number;
@@ -66,153 +71,209 @@ interface StageLightingPreset {
   highlightB: number;
 }
 
-function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLightingPreset {
+export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLightingPreset {
   if (mapId === 'Desert') {
+    if (tier === 2) {
+      // EXACT StageDesert2 (Twilight Desert) from oracle.json
+      return {
+        fogR: 0.4227,
+        fogG: 0.6211,
+        fogB: 0.9434,
+        fogDensity: 0.006,
+        skyTop: 0x182b66,
+        skyMid: 0x3b69bf,
+        skyHorizon: 0x6c9ef0,
+        sunDir: [-0.45, 0.72, 0.52],
+        sunR: 0.3647,
+        sunG: 0.6353,
+        sunB: 1.0,
+        ambientR: 0.4655,
+        ambientG: 0.5624,
+        ambientB: 0.95,
+        shadowR: 0.16,
+        shadowG: 0.24,
+        shadowB: 0.52,
+        highlightR: 0.68,
+        highlightG: 0.85,
+        highlightB: 1.0,
+      };
+    }
+    if (tier === 3) {
+      // EXACT StageDesert3 (Scorched Desert) from oracle.json
+      return {
+        fogR: 0.5765,
+        fogG: 0.1882,
+        fogB: 0.1882,
+        fogDensity: 0.006,
+        skyTop: 0x2b0a0d,
+        skyMid: 0x732222,
+        skyHorizon: 0x933030,
+        sunDir: [0.62, 0.64, 0.45],
+        sunR: 0.8784,
+        sunG: 0.7412,
+        sunB: 0.7176,
+        ambientR: 0.82,
+        ambientG: 0.63,
+        ambientB: 0.62,
+        shadowR: 0.34,
+        shadowG: 0.14,
+        shadowB: 0.2,
+        highlightR: 1.0,
+        highlightG: 0.82,
+        highlightB: 0.72,
+      };
+    }
+    // EXACT StageDesert1 (Crusty Desert) from oracle.json
     return {
-      fogR: 0.86,
-      fogG: 0.64,
-      fogB: 0.42,
-      fogDensity: 0.0058,
-      skyTop: 0x2b82d9,
-      skyMid: 0x70bde6,
-      skyHorizon: 0xf0be78,
+      fogR: 0.9255,
+      fogG: 0.8157,
+      fogB: 0.5922,
+      fogDensity: 0.006,
+      skyTop: 0x2278cc,
+      skyMid: 0x7bc2e8,
+      skyHorizon: 0xecd097,
       sunDir: [0.55, 0.78, 0.28],
       sunR: 1.0,
-      sunG: 0.94,
-      sunB: 0.78,
-      ambientR: 0.82,
-      ambientG: 0.74,
-      ambientB: 0.66,
+      sunG: 0.9569,
+      sunB: 0.8392,
+      ambientR: 0.7453,
+      ambientG: 0.7453,
+      ambientB: 0.7453,
       shadowR: 0.42,
       shadowG: 0.28,
-      shadowB: 0.46,
+      shadowB: 0.44,
       highlightR: 1.0,
       highlightG: 0.96,
-      highlightB: 0.82,
-    };
-  }
-  if (mapId === 'Graveyard') {
-    return {
-      fogR: 0.11,
-      fogG: 0.16,
-      fogB: 0.26,
-      fogDensity: 0.0095,
-      skyTop: 0x0b1021,
-      skyMid: 0x1b2847,
-      skyHorizon: 0x1d2e45,
-      sunDir: [-0.35, 0.85, 0.4],
-      sunR: 0.78,
-      sunG: 0.88,
-      sunB: 1.0,
-      ambientR: 0.56,
-      ambientG: 0.62,
-      ambientB: 0.74,
-      shadowR: 0.16,
-      shadowG: 0.18,
-      shadowB: 0.34,
-      highlightR: 0.85,
-      highlightG: 0.95,
-      highlightB: 1.0,
-    };
-  }
-  if (mapId === 'FinalBossMap') {
-    return {
-      fogR: 0.16,
-      fogG: 0.07,
-      fogB: 0.24,
-      fogDensity: 0.0082,
-      skyTop: 0x0e0617,
-      skyMid: 0x2d1145,
-      skyHorizon: 0x4a165e,
-      sunDir: [0.25, 0.9, -0.35],
-      sunR: 1.0,
-      sunG: 0.78,
-      sunB: 0.96,
-      ambientR: 0.64,
-      ambientG: 0.54,
-      ambientB: 0.72,
-      shadowR: 0.18,
-      shadowG: 0.11,
-      shadowB: 0.3,
-      highlightR: 1.0,
-      highlightG: 0.86,
-      highlightB: 0.98,
+      highlightB: 0.84,
     };
   }
 
-  // Forest Tier 2 (golden sunset) & Tier 3 (mystic emerald twilight)
-  if (tier === 2) {
+  if (mapId === 'Graveyard') {
+    // EXACT StageGraveyard (Haunted Violet) from oracle.json
     return {
-      fogR: 0.76,
-      fogG: 0.44,
-      fogB: 0.34,
-      fogDensity: 0.0066,
-      skyTop: 0x24569e,
-      skyMid: 0xd97d54,
-      skyHorizon: 0xf2a95c,
-      sunDir: [0.72, 0.48, 0.5],
+      fogR: 0.4941,
+      fogG: 0.4157,
+      fogB: 0.6235,
+      fogDensity: 0.0075,
+      skyTop: 0x1b1533,
+      skyMid: 0x4d3d6e,
+      skyHorizon: 0x7e6a9f,
+      sunDir: [-0.35, 0.85, 0.4],
+      sunR: 0.9451,
+      sunG: 0.8431,
+      sunB: 1.0,
+      ambientR: 0.7453,
+      ambientG: 0.7453,
+      ambientB: 0.7453,
+      shadowR: 0.22,
+      shadowG: 0.17,
+      shadowB: 0.38,
+      highlightR: 0.95,
+      highlightG: 0.88,
+      highlightB: 1.0,
+    };
+  }
+
+  if (mapId === 'FinalBossMap') {
+    // Dramatic Obsidian & Ember-Gold Citadel Colosseum
+    return {
+      fogR: 0.24,
+      fogG: 0.11,
+      fogB: 0.18,
+      fogDensity: 0.005,
+      skyTop: 0x0d0817,
+      skyMid: 0x3b1433,
+      skyHorizon: 0x7a3826,
+      sunDir: [0.25, 0.88, -0.35],
       sunR: 1.0,
-      sunG: 0.86,
-      sunB: 0.68,
-      ambientR: 0.78,
-      ambientG: 0.7,
-      ambientB: 0.68,
-      shadowR: 0.28,
-      shadowG: 0.24,
-      shadowB: 0.48,
+      sunG: 0.91,
+      sunB: 0.66,
+      ambientR: 0.7453,
+      ambientG: 0.68,
+      ambientB: 0.7453,
+      shadowR: 0.16,
+      shadowG: 0.1,
+      shadowB: 0.26,
       highlightR: 1.0,
       highlightG: 0.92,
-      highlightB: 0.76,
-    };
-  }
-  if (tier === 3) {
-    return {
-      fogR: 0.05,
-      fogG: 0.28,
-      fogB: 0.46,
-      fogDensity: 0.0078,
-      skyTop: 0x0d224f,
-      skyMid: 0x16527a,
-      skyHorizon: 0x0f4d6e,
-      sunDir: [-0.45, 0.78, 0.42],
-      sunR: 0.85,
-      sunG: 0.94,
-      sunB: 1.0,
-      ambientR: 0.65,
-      ambientG: 0.72,
-      ambientB: 0.8,
-      shadowR: 0.16,
-      shadowG: 0.22,
-      shadowB: 0.44,
-      highlightR: 0.9,
-      highlightG: 0.98,
-      highlightB: 1.0,
+      highlightB: 0.68,
     };
   }
 
-  // EXACT StageForest1 Lighting:
-  // FogExp2 (0.00, 0.48, 0.62) @ 0.0070, Sun (1.00, 0.96, 0.84), Ambient (0.75, 0.75, 0.75)
+  // EXACT StageForest2 (Deep Forest — Indigo-Purple Twilight) from oracle.json
+  if (tier === 2) {
+    return {
+      fogR: 0.3843,
+      fogG: 0.2824,
+      fogB: 0.6235,
+      fogDensity: 0.007,
+      skyTop: 0x1d1642,
+      skyMid: 0x4b3680,
+      skyHorizon: 0x62489f,
+      sunDir: [-0.52, 0.7, 0.48],
+      sunR: 1.0,
+      sunG: 0.9569,
+      sunB: 0.8392,
+      ambientR: 0.7,
+      ambientG: 0.66,
+      ambientB: 0.89,
+      shadowR: 0.22,
+      shadowG: 0.18,
+      shadowB: 0.46,
+      highlightR: 1.0,
+      highlightG: 0.92,
+      highlightB: 0.88,
+    };
+  }
+
+  // EXACT StageForest3 (Cursed Forest — Crimson-Ash) from oracle.json
+  if (tier === 3) {
+    return {
+      fogR: 0.302,
+      fogG: 0.0784,
+      fogB: 0.0784,
+      fogDensity: 0.007,
+      skyTop: 0x1c070a,
+      skyMid: 0x451214,
+      skyHorizon: 0x4d1414,
+      sunDir: [0.42, 0.72, -0.52],
+      sunR: 1.0,
+      sunG: 0.9569,
+      sunB: 0.8392,
+      ambientR: 0.85,
+      ambientG: 0.65,
+      ambientB: 0.65,
+      shadowR: 0.24,
+      shadowG: 0.09,
+      shadowB: 0.16,
+      highlightR: 1.0,
+      highlightG: 0.84,
+      highlightB: 0.74,
+    };
+  }
+
+  // EXACT StageForest1 (Green Forest) from oracle.json
   return {
     fogR: 0.0,
-    fogG: 0.48,
-    fogB: 0.62,
+    fogG: 0.4824,
+    fogB: 0.6157,
     fogDensity: 0.007,
     skyTop: 0x147ae0,
     skyMid: 0x24afd9,
-    skyHorizon: 0x007a9e,
+    skyHorizon: 0x007b9d,
     sunDir: [0.46, 0.82, 0.34],
     sunR: 1.0,
-    sunG: 0.96,
-    sunB: 0.84,
-    ambientR: 0.75,
-    ambientG: 0.75,
-    ambientB: 0.75,
+    sunG: 0.9569,
+    sunB: 0.8392,
+    ambientR: 0.7453,
+    ambientG: 0.7453,
+    ambientB: 0.7453,
     shadowR: 0.22,
     shadowG: 0.31,
     shadowB: 0.56,
     highlightR: 1.0,
-    highlightG: 0.96,
-    highlightB: 0.84,
+    highlightG: 0.9569,
+    highlightB: 0.8392,
   };
 }
 
@@ -246,7 +307,9 @@ export class ThreeRenderer implements IRenderer {
     gamepad: { ...DEFAULT_RENDER_SETTINGS.gamepad },
   };
   private currentTerrain: ITerrainSampler | null = null;
+  private currentMapId: MapId = 'Forest';
   private baseFogDensity = 0.007;
+  private darknessBlend = 0;
 
   // Frame timing & camera state
   private lastRenderMs = 0;
@@ -263,33 +326,34 @@ export class ThreeRenderer implements IRenderer {
   private lastViewportH = 720;
   private lastDpr = 1;
 
-  // Pre-allocated scratch math objects (ZERO per-frame allocations in render()!)
+  // Pre-allocated scratch math & atmosphere color objects (ZERO per-frame allocations in render()!)
   private readonly _targetPos = new THREE.Vector3();
   private readonly _camOffset = new THREE.Vector3();
   private readonly _camPos = new THREE.Vector3();
   private readonly _lookAt = new THREE.Vector3();
   private readonly _right = new THREE.Vector3();
   private readonly _up = new THREE.Vector3(0, 1, 0);
+  private readonly _baseFogColor = new THREE.Color(0.0, 0.4824, 0.6157);
+  private readonly _darkFogColor = new THREE.Color(0.032, 0.022, 0.062);
+  private readonly _blindFogColor = new THREE.Color(0.015, 0.015, 0.024);
 
   constructor() {
     this.assets = new AssetRegistry();
 
     this.scene = new THREE.Scene();
-    this.fog = new THREE.FogExp2(new THREE.Color(0.0, 0.48, 0.62), 0.007);
+    this.fog = new THREE.FogExp2(new THREE.Color(0.0, 0.4824, 0.6157), 0.007);
     this.scene.fog = this.fog;
-    this.scene.background = new THREE.Color(0.0, 0.48, 0.62);
+    this.scene.background = new THREE.Color(0.0, 0.4824, 0.6157);
 
     this.camera = new THREE.PerspectiveCamera(this.settings.fov, 16 / 9, 0.15, 420);
 
-    // Stylized gradient Sky Dome
     this.skyDomeGeo = new THREE.SphereGeometry(280, 24, 16);
-    this.skyDomeMat = createSkyDomeMaterial(0x147ae0, 0x24afd9, 0x007a9e);
+    this.skyDomeMat = createSkyDomeMaterial(0x147ae0, 0x24afd9, 0x007b9d);
     this.skyDome = new THREE.Mesh(this.skyDomeGeo, this.skyDomeMat);
     this.skyDome.frustumCulled = false;
     this.skyDome.renderOrder = -100;
     this.scene.add(this.skyDome);
 
-    // Subsystems
     this.terrainBuilder = new TerrainMeshBuilder(this.assets);
     this.entityInstancer = new EntityInstancer(this.assets);
     this.vfxPool = new VfxPool();
@@ -311,21 +375,10 @@ export class ThreeRenderer implements IRenderer {
     this.applyToonSettings();
   }
 
-  public getAssetRegistry(): AssetRegistry {
-    return this.assets;
-  }
-
-  public toggleFullMap(): boolean {
-    return this.minimap.toggleFullMap();
-  }
-
-  public setFullMapOpen(open: boolean): void {
-    this.minimap.setFullMapOpen(open);
-  }
-
-  public isFullMapOpen(): boolean {
-    return this.minimap.isFullMapOpen();
-  }
+  public getAssetRegistry(): AssetRegistry { return this.assets; }
+  public toggleFullMap(): boolean { return this.minimap.toggleFullMap(); }
+  public setFullMapOpen(open: boolean): void { this.minimap.setFullMapOpen(open); }
+  public isFullMapOpen(): boolean { return this.minimap.isFullMapOpen(); }
 
   // ---- IRenderer Implementation ----
 
@@ -458,6 +511,8 @@ export class ThreeRenderer implements IRenderer {
     terrain: ITerrainSampler,
   ): void {
     this.currentTerrain = terrain;
+    this.currentMapId = mapId;
+    this.darknessBlend = 0;
     this.applyStageLighting(mapId, mapTier);
     this.terrainBuilder.buildMap(mapId, mapTier, seed, terrain, this.settings.grassQuality);
     this.minimap.bakeTerrain(mapId, terrain);
@@ -473,7 +528,6 @@ export class ThreeRenderer implements IRenderer {
     this.vfxPool.consumeEvents(events);
     this.floatingText.consumeEvents(events);
 
-    // Trigger MilkShake trauma impulses on punchy arcade moments
     for (let i = 0; i < events.length; i++) {
       const ev = events[i]!;
       switch (ev.type) {
@@ -496,8 +550,13 @@ export class ThreeRenderer implements IRenderer {
           this.addShakeTrauma(0.75);
           break;
         case 'boss_defeated':
-          this.addShakeTrauma(0.68);
+        case 'pylon_charged':
+          this.addShakeTrauma(0.58);
           break;
+        case 'weapon_stolen':
+          this.addShakeTrauma(0.52);
+          break;
+        case 'weapon_reclaimed':
         case 'player_level_up':
           this.addShakeTrauma(0.3);
           break;
@@ -520,7 +579,6 @@ export class ThreeRenderer implements IRenderer {
     this.lastRenderMs = nowMs;
     const dtSec = Math.min(0.05, Math.max(0.0001, rawDtSec));
 
-    // Rolling FPS & frame time telemetry
     this.lastFrameMs = rawDtSec * 1000;
     const instFps = rawDtSec > 0.0001 ? 1 / rawDtSec : 60;
     this.smoothedFps = this.smoothedFps * 0.9 + Math.min(240, instFps) * 0.1;
@@ -528,33 +586,55 @@ export class ThreeRenderer implements IRenderer {
     this.elapsedTimeSec += dtSec;
     setGlobalToonTime(this.elapsedTimeSec);
 
-    // Classic 50Hz Snap toggle locks interpolation strictly to 1.0
     const alpha = this.settings.classic50HzSnap ? 1.0 : Math.max(0, Math.min(1, interpAlpha));
     this.lastInterpAlpha = alpha;
     this.lastEnemyCount = currState.enemies.length;
     this.lastProjectileCount = currState.projectiles.length;
 
-    // Lazily build rails & jump pads once when SimState delivers them
-    this.terrainBuilder.ensureWorldFeatures(currState.rails, currState.jumpPads);
-    this.terrainBuilder.updateAnimatedProps(this.elapsedTimeSec);
-
-    // Graveyard Big Bob Darkness dynamic fog modulation
-    const targetDensity = currState.darknessActive ? 0.036 : this.baseFogDensity;
-    this.fog.density += (targetDensity - this.fog.density) * Math.min(1, dtSec * 4.0);
-
-    // Update camera (3rd person spring-arm OR 1st person eye + dynamic speed FOV + MilkShake)
-    this.updateCamera(prevState, currState, alpha, dtSec);
-
-    // Keep sky dome centered on camera
-    this.skyDome.position.copy(this.camera.position);
-
-    // Update player contact shadow
     const px = prevState.player.pos.x + (currState.player.pos.x - prevState.player.pos.x) * alpha;
     const py = prevState.player.pos.y + (currState.player.pos.y - prevState.player.pos.y) * alpha;
     const pz = prevState.player.pos.z + (currState.player.pos.z - prevState.player.pos.z) * alpha;
+
+    // Lazily build rails & jump pads once per map, then animate weather/props (ZERO allocations!)
+    this.terrainBuilder.ensureWorldFeatures(currState.rails, currState.jumpPads);
+    this.terrainBuilder.updateAnimatedProps(this.elapsedTimeSec, px, pz);
+
+    // Dynamic atmosphere modulation: Big Bob Darkness, Blind challenge, Desert sandstorm & Floor-is-Lava!
+    const chId = currState.challengeId;
+    const isBlind = chId !== null && (chId === 'Blind' || chId === 'blind' || chId.indexOf('Blind') >= 0 || chId.indexOf('blind') >= 0);
+    const isLava = chId !== null && (chId.indexOf('Lava') >= 0 || chId.indexOf('lava') >= 0);
+
+    this.terrainBuilder.setFloorIsLava(isLava, this.elapsedTimeSec);
+
+    const targetDark = isBlind ? 1.0 : currState.darknessActive ? 0.88 : 0.0;
+    this.darknessBlend += (targetDark - this.darknessBlend) * Math.min(1, dtSec * 3.5);
+
+    const sandstormGust =
+      this.currentMapId === 'Desert' ? 0.0012 * (Math.sin(this.elapsedTimeSec * 0.35) * 0.5 + 0.5) : 0;
+    const targetDensity = isBlind
+      ? 0.056
+      : currState.darknessActive
+        ? 0.042
+        : this.baseFogDensity + sandstormGust;
+    this.fog.density += (targetDensity - this.fog.density) * Math.min(1, dtSec * 4.0);
+
+    // Smoothly darken fog, scene backdrop & sky dome during Darkness / Blind (ZERO allocs!)
+    const darkTargetCol = isBlind ? this._blindFogColor : this._darkFogColor;
+    this.fog.color.copy(this._baseFogColor).lerp(darkTargetCol, this.darknessBlend);
+    if (this.scene.background instanceof THREE.Color) {
+      this.scene.background.copy(this.fog.color);
+    }
+    const uSkyDark = this.skyDomeMat.uniforms.uDarkness;
+    if (uSkyDark) uSkyDark.value = this.darknessBlend;
+
+    // Update camera
+    this.updateCamera(prevState, currState, alpha, dtSec);
+    this.skyDome.position.copy(this.camera.position);
+
+    // Update player contact shadow
     this.terrainBuilder.updateContactShadow(px, py, pz, !currState.player.dead);
 
-    // Sync entities & VFX (zero allocations!)
+    // Sync entities & VFX (ZERO allocations!)
     this.entityInstancer.sync(
       prevState,
       currState,
@@ -568,12 +648,10 @@ export class ThreeRenderer implements IRenderer {
     }
     this.vfxPool.update(dtSec);
 
-    // Render 3D scene
     if (this.renderer) {
       this.renderer.render(this.scene, this.camera);
     }
 
-    // Render crisp 2D overlays (3D-projected floating damage numbers + retro minimap/fullmap)
     this.floatingText.render(this.camera, dtSec);
     this.minimap.render(currState);
   }
@@ -605,15 +683,19 @@ export class ThreeRenderer implements IRenderer {
   private applyStageLighting(mapId: MapId, tier: MapTier): void {
     const p = getStageLightingPreset(mapId, tier);
     this.baseFogDensity = p.fogDensity;
-    this.fog.color.setRGB(p.fogR, p.fogG, p.fogB);
+    this._baseFogColor.setRGB(p.fogR, p.fogG, p.fogB);
+    this.fog.color.copy(this._baseFogColor);
     this.fog.density = p.fogDensity;
     if (this.scene.background instanceof THREE.Color) {
-      this.scene.background.setRGB(p.fogR, p.fogG, p.fogB);
+      this.scene.background.copy(this._baseFogColor);
     }
 
     (this.skyDomeMat.uniforms.uTopColor!.value as THREE.Color).setHex(p.skyTop);
     (this.skyDomeMat.uniforms.uMidColor!.value as THREE.Color).setHex(p.skyMid);
     (this.skyDomeMat.uniforms.uHorizonColor!.value as THREE.Color).setHex(p.skyHorizon);
+    if (this.skyDomeMat.uniforms.uDarkness) {
+      this.skyDomeMat.uniforms.uDarkness.value = 0;
+    }
 
     setGlobalToonLighting({
       sunDirX: p.sunDir[0],
@@ -657,7 +739,6 @@ export class ThreeRenderer implements IRenderer {
     const yaw = lerpAngle(p0.yaw, p1.yaw, alpha);
     const pitch = Math.max(-1.35, Math.min(1.35, p0.pitch + (p1.pitch - p0.pitch) * alpha));
 
-    // Title/menu scenic slow orbit camera around spawn clearing!
     if (
       currState.phase === 'title' ||
       currState.phase === 'character_select' ||
@@ -672,7 +753,6 @@ export class ThreeRenderer implements IRenderer {
       return;
     }
 
-    // Dynamic Speed FOV boost (+0..12 deg during high-speed slide/bhop/grind!)
     const hSpeed = Math.hypot(p1.vel.x, p1.vel.z);
     const speedFactor = Math.max(0, Math.min(1, (hSpeed - 11.0) / 17.0));
     const slideBonus = p1.isSliding || p1.railId !== null ? 2.5 : 0;
@@ -683,14 +763,12 @@ export class ThreeRenderer implements IRenderer {
       this.camera.updateProjectionMatrix();
     }
 
-    // Decay MilkShake trauma
     this.shakeTrauma = Math.max(0, this.shakeTrauma - dtSec * 2.4);
     const shakeAmt = this.shakeTrauma * this.shakeTrauma * this.settings.screenShakeIntensity;
     const shakeX = shakeAmt > 0.001 ? Math.sin(this.elapsedTimeSec * 57.3) * shakeAmt * 0.65 : 0;
     const shakeY = shakeAmt > 0.001 ? Math.cos(this.elapsedTimeSec * 49.1) * shakeAmt * 0.55 : 0;
     const shakeRoll = shakeAmt > 0.001 ? Math.sin(this.elapsedTimeSec * 41.7) * shakeAmt * 0.045 : 0;
 
-    // 3D aim forward vector aligned with simcore: yaw=0 looks along -Z, +X is right
     const cosPitch = Math.cos(pitch);
     const sinPitch = Math.sin(pitch);
     const fwdX = -Math.sin(yaw) * cosPitch;
@@ -713,12 +791,9 @@ export class ThreeRenderer implements IRenderer {
       return;
     }
 
-    // 3rd-Person Orbit Camera (z = 11.0 default) with terrain collision spring-arm pull-in
     const desiredDist = Math.max(4.5, this.settings.cameraDistance || CAMERA_3RD_OFFSET_Z);
     const pivotY = p1.isSliding ? CAMERA_3RD_OFFSET_Y * 0.72 : CAMERA_3RD_OFFSET_Y;
     this._targetPos.set(px, py + pivotY, pz);
-
-    // Camera sits behind player along -forward with subtle vertical elevation
     this._camOffset.set(-fwdX, -fwdY + 0.14, -fwdZ).normalize();
 
     let safeDist = desiredDist;
@@ -737,7 +812,6 @@ export class ThreeRenderer implements IRenderer {
       }
     }
 
-    // Fast pull-in on collision, smooth ease-out when unobstructed
     const distRate = safeDist < this.currentCamDist ? 18.0 : 7.5;
     this.currentCamDist += (safeDist - this.currentCamDist) * Math.min(1, dtSec * distRate);
 
@@ -747,7 +821,6 @@ export class ThreeRenderer implements IRenderer {
       this._targetPos.z + this._camOffset.z * this.currentCamDist,
     );
 
-    // Clamp final camera Y gently above local terrain surface
     if (this.currentTerrain) {
       const minY = this.currentTerrain.sample(this._camPos.x, this._camPos.z).height + 0.95;
       if (this._camPos.y < minY) {
@@ -755,7 +828,6 @@ export class ThreeRenderer implements IRenderer {
       }
     }
 
-    // Apply MilkShake offset in camera right/up plane
     this._right.set(Math.cos(yaw), 0, -Math.sin(yaw));
     this._camPos.addScaledVector(this._right, shakeX);
     this._camPos.addScaledVector(this._up, shakeY);

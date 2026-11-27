@@ -323,6 +323,12 @@ export class MinimapRenderer {
         if (!it.used) {
           drawPixelIcon(ctx, 'chest', sx, sy, 1.5, it.variant === 'golden' ? '#ffe45e' : '#f59e0b');
         }
+      } else if (it.kind === 'ShadyGuy' && !it.used) {
+        drawPixelIcon(ctx, 'shop', sx, sy, 1.5, '#c084fc');
+      } else if (it.kind === 'Microwave' && !it.used) {
+        drawPixelIcon(ctx, 'microwave', sx, sy, 1.5, '#38f2ff');
+      } else if (it.kind === 'ShrineMoai' && !it.used) {
+        drawPixelIcon(ctx, 'moai', sx, sy, 1.5, '#cbd5e1');
       } else if (!it.used) {
         ctx.fillStyle = '#080a10';
         ctx.fillRect(Math.round(sx - 3), Math.round(sy - 3), 6, 6);
@@ -331,7 +337,7 @@ export class MinimapRenderer {
       }
     }
 
-    // 5. Boss Portal (pulsing violet-cyan icon) & Boss Pylons
+    // 5. Boss Portal, Boss Pylons & Big Bob Darkness Lamps
     if (state.bossPortalOpen && state.bossPortalPos) {
       const px = toScreenX(state.bossPortalPos.x);
       const py = toScreenY(state.bossPortalPos.z);
@@ -343,7 +349,17 @@ export class MinimapRenderer {
       const py = pylons[i]!;
       const sx = toScreenX(py.pos.x);
       const sy = toScreenY(py.pos.z);
-      drawPixelIcon(ctx, 'star', sx, sy, 1.5, py.cleansed ? '#4dff9e' : '#ff2ec4');
+      const pCol = py.cleansed ? '#4dff9e' : py.stolenWeaponId ? '#ffe45e' : '#ff2ec4';
+      drawPixelIcon(ctx, 'star', sx, sy, py.stolenWeaponId && !py.cleansed ? 2 : 1.5, pCol);
+    }
+
+    const lamps = state.darknessLamps;
+    for (let i = 0; i < lamps.length; i++) {
+      const lamp = lamps[i]!;
+      const sx = toScreenX(lamp.pos.x);
+      const sy = toScreenY(lamp.pos.z);
+      if (Math.abs(sx - cx) > halfInner + 10 || Math.abs(sy - cy) > halfInner + 10) continue;
+      drawPixelIcon(ctx, 'lamp', sx, sy, 1.5, lamp.lit ? '#ffe45e' : '#7c6a99');
     }
 
     // 6. Nearby Enemies & Bosses
