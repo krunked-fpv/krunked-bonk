@@ -534,6 +534,7 @@ export function createSkyDomeMaterial(
       uSunDir: SHARED_TOON_UNIFORMS.uSunDir,
       uSunColor: SHARED_TOON_UNIFORMS.uSunColor,
       uTime: SHARED_TOON_UNIFORMS.uTime,
+      uDarkness: { value: 0.0 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
@@ -550,34 +551,38 @@ export function createSkyDomeMaterial(
       uniform vec3 uSunDir;
       uniform vec3 uSunColor;
       uniform float uTime;
+      uniform float uDarkness;
       varying vec3 vDir;
 
       void main() {
         vec3 d = normalize(vDir);
         float h = clamp(d.y, 0.0, 1.0);
+        float lightKeep = clamp(1.0 - uDarkness, 0.0, 1.0);
 
-        // Stylized multi-stop azure -> turquoise sky gradient
+        // Stylized multi-stop sky gradient
         vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.32, h));
         col = mix(col, uTopColor, smoothstep(0.28, 0.85, h));
 
         // Crisp pixelated cel cloud puffs drifting high in the sky
-        if (d.y > 0.08) {
+        if (d.y > 0.08 && lightKeep > 0.05) {
           vec2 cloudUv = d.xz / (d.y + 0.35);
           cloudUv.x += uTime * 0.012;
-          // Quantize UVs slightly for subtle retro pixel feel
           vec2 qUv = floor(cloudUv * 18.0) / 18.0;
           float n1 = sin(qUv.x * 2.4 + cos(qUv.y * 2.1)) * cos(qUv.y * 1.9 - qUv.x * 0.7);
           float n2 = sin(qUv.x * 5.2 - qUv.y * 4.3) * 0.35;
           float cloudMask = smoothstep(0.46, 0.50, n1 + n2) * smoothstep(0.08, 0.28, d.y) * (1.0 - smoothstep(0.65, 0.92, d.y));
-          col = mix(col, mix(vec3(0.95, 0.98, 1.0), uSunColor, 0.25), cloudMask * 0.55);
+          col = mix(col, mix(vec3(0.95, 0.98, 1.0), uSunColor, 0.25), cloudMask * 0.55 * lightKeep);
         }
 
-        // Crisp stylized arcade sun disc + warm halo
+        // Crisp stylized arcade sun/moon disc + warm halo
         float sunDot = max(dot(d, normalize(uSunDir)), 0.0);
-        float sunHalo = pow(sunDot, 16.0) * 0.32;
-        float sunDisc = smoothstep(0.9945, 0.9965, sunDot);
+        float sunHalo = pow(sunDot, 16.0) * 0.32 * lightKeep;
+        float sunDisc = smoothstep(0.9945, 0.9965, sunDot) * lightKeep;
         col += uSunColor * sunHalo;
         col = mix(col, vec3(1.0, 0.99, 0.92), sunDisc);
+
+        // Smooth darkness veil for Big Bob Darkness / Blind challenge
+        col = mix(col, vec3(0.018, 0.014, 0.032), clamp(uDarkness * 0.92, 0.0, 0.95));
 
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>

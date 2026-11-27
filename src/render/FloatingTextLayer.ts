@@ -336,6 +336,22 @@ export class FloatingTextLayer {
           }
           break;
 
+        case 'pylon_charged':
+          this.spawn(
+            `PYLON ${ev.cleansedCount}/${ev.totalPylons}!`,
+            ev.pos.x,
+            ev.pos.y + 4.5,
+            ev.pos.z,
+            3.0,
+            '#a6ffcb',
+            '#34eb64',
+            1.2,
+            2.1,
+            1.4,
+            4,
+          );
+          break;
+
         default:
           break;
       }
