@@ -1,15 +1,17 @@
 /**
- * KRUNKEDBONK — Declarative Audio Cue & Music Manifest + AudioSpamFilter
+ * KRUNKEDBONK — Declarative Audio Cue & Music Manifest + AudioSpamFilter (Wave 2)
  *
- * Maps every SimEvent variant, weapon fire ID, movement state, pickup combo,
- * interactable fanfare, and adaptive music track to mix metadata, cooldown
- * spam-filter windows, polyphony caps, and optional Custom Pack clip lookups.
+ * Maps every SimEvent variant, all 30 weapon IDs across distinct evocative synth
+ * families, movement & ambient loops, pickup combos, Wave 2 encounter fanfares,
+ * and the full 19-track (17 looping + 2 stingers) adaptive OST & Boombox manifest.
  */
 
 import type {
   DebuffType,
   GamePhase,
   InteractableKind,
+  MapId,
+  MapTier,
   PickupKind,
   SimEvent,
 } from '../contracts/index';
@@ -29,7 +31,29 @@ export type WeaponAudioFamily =
   | 'rock'
   | 'lightning'
   | 'sniper'
-  | 'bow';
+  | 'bow'
+  | 'aegis_clang'
+  | 'axe_whoosh'
+  | 'boomerang_whir'
+  | 'blackhole_hum'
+  | 'blood_pulse'
+  | 'bow_twang'
+  | 'scythe_reap'
+  | 'shotgun_boom'
+  | 'rocket_launch'
+  | 'noodle_beam'
+  | 'tornado_whoosh'
+  | 'katana_shing'
+  | 'mine_beep'
+  | 'flask_shatter'
+  | 'dice_rattle'
+  | 'dragon_flame'
+  | 'frost_crack'
+  | 'dagger_zip'
+  | 'flame_trail'
+  | 'corrupted_slash'
+  | 'execution_blade'
+  | 'hero_wave';
 
 export type SfxCueId =
   // Combat & hits
@@ -47,7 +71,7 @@ export type SfxCueId =
   | 'player_dodge'
   | 'player_death'
   | 'player_revive'
-  // Weapons
+  // Weapons (all 30 distinct families + legacy bow alias)
   | 'weapon_fire_fire'
   | 'weapon_fire_bone'
   | 'weapon_fire_sword'
@@ -57,6 +81,28 @@ export type SfxCueId =
   | 'weapon_fire_lightning'
   | 'weapon_fire_sniper'
   | 'weapon_fire_bow'
+  | 'weapon_fire_aegis_clang'
+  | 'weapon_fire_axe_whoosh'
+  | 'weapon_fire_boomerang_whir'
+  | 'weapon_fire_blackhole_hum'
+  | 'weapon_fire_blood_pulse'
+  | 'weapon_fire_bow_twang'
+  | 'weapon_fire_scythe_reap'
+  | 'weapon_fire_shotgun_boom'
+  | 'weapon_fire_rocket_launch'
+  | 'weapon_fire_noodle_beam'
+  | 'weapon_fire_tornado_whoosh'
+  | 'weapon_fire_katana_shing'
+  | 'weapon_fire_mine_beep'
+  | 'weapon_fire_flask_shatter'
+  | 'weapon_fire_dice_rattle'
+  | 'weapon_fire_dragon_flame'
+  | 'weapon_fire_frost_crack'
+  | 'weapon_fire_dagger_zip'
+  | 'weapon_fire_flame_trail'
+  | 'weapon_fire_corrupted_slash'
+  | 'weapon_fire_execution_blade'
+  | 'weapon_fire_hero_wave'
   | 'weapon_stolen'
   | 'weapon_reclaimed'
   // Movement
@@ -79,12 +125,16 @@ export type SfxCueId =
   | 'heal'
   | 'powerup'
   | 'level_up'
-  // World, shrines, chests & bosses
+  // World, shrines, encounters, chests & bosses
   | 'shrine_charge'
   | 'shrine_complete'
   | 'chest_open'
   | 'pot_break'
   | 'pylon_charged'
+  | 'shady_buy'
+  | 'microwave_clone'
+  | 'moai_blessing'
+  | 'lamp_lit'
   | 'portal_activated'
   | 'elite_spawn'
   | 'boss_spawn'
@@ -97,7 +147,7 @@ export type SfxCueId =
   | 'ui_reroll'
   | 'ui_banish';
 
-export type ContinuousLoopId = 'slide_loop' | 'rail_grind_loop';
+export type ContinuousLoopId = 'slide_loop' | 'rail_grind_loop' | 'desert_wind';
 
 export type MusicState =
   | 'title'
@@ -110,11 +160,60 @@ export type MusicState =
 
 export type MusicTrackId =
   | 'title'
-  | 'forest_explore'
+  | 'forest_1'
+  | 'forest_2'
+  | 'forest_3'
   | 'forest_boss'
+  | 'desert_1'
+  | 'desert_2'
+  | 'desert_3'
+  | 'desert_boss'
+  | 'graveyard'
+  | 'graveyard_boss'
+  | 'final_boss'
   | 'final_swarm'
+  | 'calcium'
+  | 'megachad'
+  | 'dicy'
+  | 'space'
   | 'victory'
   | 'game_over';
+
+export type BoomboxTrackId = 'auto' | MusicTrackId;
+
+/** Canonical 30 weapon IDs across the full catalog. */
+export const ALL_WEAPON_IDS = [
+  'WeaponFireStaff',
+  'WeaponBone',
+  'WeaponSword',
+  'WeaponAura',
+  'WeaponRevolver',
+  'WeaponChunkers',
+  'WeaponLightningBolt',
+  'WeaponSniper',
+  'WeaponAegis',
+  'WeaponAxe',
+  'WeaponBananarang',
+  'WeaponBlackHole',
+  'WeaponBloodMagic',
+  'WeaponBow',
+  'WeaponCorruptedSword',
+  'WeaponDexecutioner',
+  'WeaponDice',
+  'WeaponDragonsBreath',
+  'WeaponFlameWalker',
+  'WeaponFrostWalker',
+  'WeaponHeroSword',
+  'WeaponKatana',
+  'WeaponMines',
+  'WeaponPoisonFlask',
+  'WeaponScythe',
+  'WeaponShotgun',
+  'WeaponSluttyRocket',
+  'WeaponSpaceNoodle',
+  'WeaponTornado',
+  'WeaponWirelessDagger',
+] as const;
 
 // ============================================================================
 // 2. MANIFEST DEFINITIONS
@@ -147,6 +246,18 @@ export interface ContinuousLoopDef {
 
 export interface MusicTrackManifestEntry {
   readonly id: MusicTrackId;
+  readonly label: string;
+  readonly displayName: string;
+  readonly bpm: number;
+  readonly looping: boolean;
+  readonly gain: number;
+  readonly boomboxSelectable: boolean;
+  readonly customPackClipIds: readonly string[];
+}
+
+export interface BoomboxTrackDescriptor {
+  readonly id: BoomboxTrackId;
+  readonly label: string;
   readonly displayName: string;
   readonly bpm: number;
   readonly looping: boolean;
@@ -326,7 +437,7 @@ export const SFX_MANIFEST: Readonly<Record<SfxCueId, SfxCueDef>> = Object.freeze
     customPackClipIds: ['sfx_player_revive', 'revive', 'phoenix'],
   },
 
-  // --- Weapons ---
+  // --- Weapons (All 30 Families) ---
   weapon_fire_fire: {
     id: 'weapon_fire_fire',
     category: 'weapon',
@@ -426,27 +537,269 @@ export const SFX_MANIFEST: Readonly<Record<SfxCueId, SfxCueDef>> = Object.freeze
     estimatedDurationMs: 160,
     customPackClipIds: ['sfx_weapon_bow', 'weapon_bow', 'bow_release'],
   },
+  weapon_fire_aegis_clang: {
+    id: 'weapon_fire_aegis_clang',
+    category: 'weapon',
+    gain: 0.72,
+    cooldownMs: 75,
+    maxPolyphony: 3,
+    priority: 6,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 280,
+    customPackClipIds: ['sfx_weapon_aegis', 'weapon_aegis', 'shield_clang'],
+  },
+  weapon_fire_axe_whoosh: {
+    id: 'weapon_fire_axe_whoosh',
+    category: 'weapon',
+    gain: 0.66,
+    cooldownMs: 62,
+    maxPolyphony: 4,
+    priority: 5,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 230,
+    customPackClipIds: ['sfx_weapon_axe', 'weapon_axe', 'axe_throw'],
+  },
+  weapon_fire_boomerang_whir: {
+    id: 'weapon_fire_boomerang_whir',
+    category: 'weapon',
+    gain: 0.58,
+    cooldownMs: 65,
+    maxPolyphony: 4,
+    priority: 5,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 240,
+    customPackClipIds: ['sfx_weapon_bananarang', 'weapon_bananarang', 'boomerang'],
+  },
+  weapon_fire_blackhole_hum: {
+    id: 'weapon_fire_blackhole_hum',
+    category: 'weapon',
+    gain: 0.72,
+    cooldownMs: 120,
+    maxPolyphony: 2,
+    priority: 6,
+    pitchJitter: 0.04,
+    estimatedDurationMs: 420,
+    customPackClipIds: ['sfx_weapon_blackhole', 'weapon_blackhole', 'void_vortex'],
+  },
+  weapon_fire_blood_pulse: {
+    id: 'weapon_fire_blood_pulse',
+    category: 'weapon',
+    gain: 0.62,
+    cooldownMs: 85,
+    maxPolyphony: 3,
+    priority: 5,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 260,
+    customPackClipIds: ['sfx_weapon_bloodmagic', 'weapon_bloodmagic', 'blood_pulse'],
+  },
+  weapon_fire_bow_twang: {
+    id: 'weapon_fire_bow_twang',
+    category: 'weapon',
+    gain: 0.58,
+    cooldownMs: 48,
+    maxPolyphony: 4,
+    priority: 5,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 170,
+    customPackClipIds: ['sfx_weapon_bow', 'weapon_bow', 'bow_twang', 'bow_release'],
+  },
+  weapon_fire_scythe_reap: {
+    id: 'weapon_fire_scythe_reap',
+    category: 'weapon',
+    gain: 0.7,
+    cooldownMs: 68,
+    maxPolyphony: 3,
+    priority: 6,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 280,
+    customPackClipIds: ['sfx_weapon_scythe', 'weapon_scythe', 'scythe_reap'],
+  },
+  weapon_fire_shotgun_boom: {
+    id: 'weapon_fire_shotgun_boom',
+    category: 'weapon',
+    gain: 0.82,
+    cooldownMs: 85,
+    maxPolyphony: 3,
+    priority: 7,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 290,
+    customPackClipIds: ['sfx_weapon_shotgun', 'weapon_shotgun', 'shotgun_blast'],
+  },
+  weapon_fire_rocket_launch: {
+    id: 'weapon_fire_rocket_launch',
+    category: 'weapon',
+    gain: 0.72,
+    cooldownMs: 75,
+    maxPolyphony: 4,
+    priority: 6,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 310,
+    customPackClipIds: ['sfx_weapon_rocket', 'weapon_sluttyrocket', 'rocket_launch'],
+  },
+  weapon_fire_noodle_beam: {
+    id: 'weapon_fire_noodle_beam',
+    category: 'weapon',
+    gain: 0.56,
+    cooldownMs: 80,
+    maxPolyphony: 3,
+    priority: 5,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 280,
+    customPackClipIds: ['sfx_weapon_spacenoodle', 'weapon_spacenoodle', 'laser_beam'],
+  },
+  weapon_fire_tornado_whoosh: {
+    id: 'weapon_fire_tornado_whoosh',
+    category: 'weapon',
+    gain: 0.64,
+    cooldownMs: 95,
+    maxPolyphony: 3,
+    priority: 5,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 340,
+    customPackClipIds: ['sfx_weapon_tornado', 'weapon_tornado', 'wind_vortex'],
+  },
+  weapon_fire_katana_shing: {
+    id: 'weapon_fire_katana_shing',
+    category: 'weapon',
+    gain: 0.64,
+    cooldownMs: 42,
+    maxPolyphony: 5,
+    priority: 6,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 185,
+    customPackClipIds: ['sfx_weapon_katana', 'weapon_katana', 'katana_shing'],
+  },
+  weapon_fire_mine_beep: {
+    id: 'weapon_fire_mine_beep',
+    category: 'weapon',
+    gain: 0.6,
+    cooldownMs: 65,
+    maxPolyphony: 4,
+    priority: 5,
+    pitchJitter: 0.04,
+    estimatedDurationMs: 200,
+    customPackClipIds: ['sfx_weapon_mines', 'weapon_mines', 'mine_arm'],
+  },
+  weapon_fire_flask_shatter: {
+    id: 'weapon_fire_flask_shatter',
+    category: 'weapon',
+    gain: 0.64,
+    cooldownMs: 65,
+    maxPolyphony: 4,
+    priority: 5,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 240,
+    customPackClipIds: ['sfx_weapon_poisonflask', 'weapon_poisonflask', 'glass_shatter'],
+  },
+  weapon_fire_dice_rattle: {
+    id: 'weapon_fire_dice_rattle',
+    category: 'weapon',
+    gain: 0.62,
+    cooldownMs: 55,
+    maxPolyphony: 4,
+    priority: 5,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 195,
+    customPackClipIds: ['sfx_weapon_dice', 'weapon_dice', 'dice_rattle'],
+  },
+  weapon_fire_dragon_flame: {
+    id: 'weapon_fire_dragon_flame',
+    category: 'weapon',
+    gain: 0.68,
+    cooldownMs: 70,
+    maxPolyphony: 3,
+    priority: 6,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 310,
+    customPackClipIds: ['sfx_weapon_dragonsbreath', 'weapon_dragonsbreath', 'dragon_flame'],
+  },
+  weapon_fire_frost_crack: {
+    id: 'weapon_fire_frost_crack',
+    category: 'weapon',
+    gain: 0.64,
+    cooldownMs: 75,
+    maxPolyphony: 3,
+    priority: 5,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 240,
+    customPackClipIds: ['sfx_weapon_frostwalker', 'weapon_frostwalker', 'ice_shatter'],
+  },
+  weapon_fire_dagger_zip: {
+    id: 'weapon_fire_dagger_zip',
+    category: 'weapon',
+    gain: 0.56,
+    cooldownMs: 40,
+    maxPolyphony: 5,
+    priority: 5,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 145,
+    customPackClipIds: ['sfx_weapon_wirelessdagger', 'weapon_wirelessdagger', 'dagger_throw'],
+  },
+  weapon_fire_flame_trail: {
+    id: 'weapon_fire_flame_trail',
+    category: 'weapon',
+    gain: 0.54,
+    cooldownMs: 75,
+    maxPolyphony: 3,
+    priority: 4,
+    pitchJitter: 0.06,
+    estimatedDurationMs: 210,
+    customPackClipIds: ['sfx_weapon_flamewalker', 'weapon_flamewalker', 'fire_trail'],
+  },
+  weapon_fire_corrupted_slash: {
+    id: 'weapon_fire_corrupted_slash',
+    category: 'weapon',
+    gain: 0.68,
+    cooldownMs: 58,
+    maxPolyphony: 4,
+    priority: 6,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 235,
+    customPackClipIds: ['sfx_weapon_corruptedsword', 'weapon_corruptedsword', 'dark_slash'],
+  },
+  weapon_fire_execution_blade: {
+    id: 'weapon_fire_execution_blade',
+    category: 'weapon',
+    gain: 0.72,
+    cooldownMs: 64,
+    maxPolyphony: 3,
+    priority: 6,
+    pitchJitter: 0.04,
+    estimatedDurationMs: 260,
+    customPackClipIds: ['sfx_weapon_dexecutioner', 'weapon_dexecutioner', 'guillotine_slash'],
+  },
+  weapon_fire_hero_wave: {
+    id: 'weapon_fire_hero_wave',
+    category: 'weapon',
+    gain: 0.66,
+    cooldownMs: 58,
+    maxPolyphony: 4,
+    priority: 6,
+    pitchJitter: 0.05,
+    estimatedDurationMs: 245,
+    customPackClipIds: ['sfx_weapon_herosword', 'weapon_herosword', 'sword_wave'],
+  },
   weapon_stolen: {
     id: 'weapon_stolen',
     category: 'world',
-    gain: 0.88,
+    gain: 0.92,
     cooldownMs: 200,
     maxPolyphony: 2,
     priority: 9,
     pitchJitter: 0,
-    estimatedDurationMs: 460,
-    customPackClipIds: ['sfx_weapon_stolen', 'weapon_stolen'],
+    estimatedDurationMs: 580,
+    customPackClipIds: ['sfx_weapon_stolen', 'weapon_stolen', 'power_drain'],
   },
   weapon_reclaimed: {
     id: 'weapon_reclaimed',
     category: 'world',
-    gain: 0.9,
+    gain: 0.92,
     cooldownMs: 200,
     maxPolyphony: 2,
     priority: 9,
     pitchJitter: 0,
-    estimatedDurationMs: 480,
-    customPackClipIds: ['sfx_weapon_reclaimed', 'weapon_reclaimed'],
+    estimatedDurationMs: 600,
+    customPackClipIds: ['sfx_weapon_reclaimed', 'weapon_reclaimed', 'power_restore'],
   },
 
   // --- Movement ---
@@ -651,7 +1004,7 @@ export const SFX_MANIFEST: Readonly<Record<SfxCueId, SfxCueDef>> = Object.freeze
     customPackClipIds: ['sfx_level_up', 'level_up', 'levelup'],
   },
 
-  // --- World, Shrines, Chests & Bosses ---
+  // --- World, Shrines, Encounters, Chests & Bosses ---
   shrine_charge: {
     id: 'shrine_charge',
     category: 'world',
@@ -699,24 +1052,68 @@ export const SFX_MANIFEST: Readonly<Record<SfxCueId, SfxCueDef>> = Object.freeze
   pylon_charged: {
     id: 'pylon_charged',
     category: 'world',
-    gain: 0.92,
+    gain: 0.94,
     cooldownMs: 180,
     maxPolyphony: 2,
     priority: 9,
     pitchJitter: 0,
-    estimatedDurationMs: 650,
-    customPackClipIds: ['sfx_pylon_charged', 'pylon_cleanse'],
+    estimatedDurationMs: 740,
+    customPackClipIds: ['sfx_pylon_charged', 'pylon_cleanse', 'crystal_chord'],
+  },
+  shady_buy: {
+    id: 'shady_buy',
+    category: 'world',
+    gain: 0.84,
+    cooldownMs: 90,
+    maxPolyphony: 3,
+    priority: 8,
+    pitchJitter: 0.03,
+    estimatedDurationMs: 320,
+    customPackClipIds: ['sfx_shady_buy', 'shady_buy', 'merchant_buy', 'coin'],
+  },
+  microwave_clone: {
+    id: 'microwave_clone',
+    category: 'world',
+    gain: 0.9,
+    cooldownMs: 220,
+    maxPolyphony: 2,
+    priority: 9,
+    pitchJitter: 0,
+    estimatedDurationMs: 820,
+    customPackClipIds: ['sfx_microwave_clone', 'microwave_clone', 'microwave_ding'],
+  },
+  moai_blessing: {
+    id: 'moai_blessing',
+    category: 'world',
+    gain: 0.92,
+    cooldownMs: 240,
+    maxPolyphony: 2,
+    priority: 9,
+    pitchJitter: 0,
+    estimatedDurationMs: 880,
+    customPackClipIds: ['sfx_moai_blessing', 'moai_blessing', 'stone_gong'],
+  },
+  lamp_lit: {
+    id: 'lamp_lit',
+    category: 'world',
+    gain: 0.88,
+    cooldownMs: 140,
+    maxPolyphony: 3,
+    priority: 9,
+    pitchJitter: 0.02,
+    estimatedDurationMs: 540,
+    customPackClipIds: ['sfx_lamp_lit', 'lamp_lit', 'lantern_ignite'],
   },
   portal_activated: {
     id: 'portal_activated',
     category: 'world',
-    gain: 0.9,
+    gain: 0.92,
     cooldownMs: 300,
     maxPolyphony: 1,
     priority: 9,
     pitchJitter: 0,
-    estimatedDurationMs: 750,
-    customPackClipIds: ['sfx_portal', 'portal_activated'],
+    estimatedDurationMs: 860,
+    customPackClipIds: ['sfx_portal', 'portal_activated', 'warp'],
   },
   elite_spawn: {
     id: 'elite_spawn',
@@ -821,6 +1218,9 @@ export const SFX_MANIFEST: Readonly<Record<SfxCueId, SfxCueDef>> = Object.freeze
   },
 });
 
+/** Convenience alias consumed by asset/manifest verifiers. */
+export const SOUND_MANIFEST = SFX_MANIFEST;
+
 export const CONTINUOUS_LOOP_MANIFEST: Readonly<Record<ContinuousLoopId, ContinuousLoopDef>> =
   Object.freeze({
     slide_loop: {
@@ -833,12 +1233,18 @@ export const CONTINUOUS_LOOP_MANIFEST: Readonly<Record<ContinuousLoopId, Continu
       gain: 0.42,
       customPackClipIds: ['loop_rail_grind', 'rail_grind_loop', 'grind_loop'],
     },
+    desert_wind: {
+      id: 'desert_wind',
+      gain: 0.28,
+      customPackClipIds: ['loop_desert_wind', 'desert_wind', 'ambient_desert_wind'],
+    },
   });
 
 export const MUSIC_TRACK_MANIFEST: Readonly<Record<MusicTrackId, MusicTrackManifestEntry>> =
   Object.freeze({
     title: {
       id: 'title',
+      label: 'Crypt Gate Overture (Title)',
       displayName: 'Crypt Gate Overture',
       bpm: 104,
       looping: true,
@@ -846,17 +1252,39 @@ export const MUSIC_TRACK_MANIFEST: Readonly<Record<MusicTrackId, MusicTrackManif
       boomboxSelectable: true,
       customPackClipIds: ['bgm_title', 'music_title', 'menu_theme', 'title'],
     },
-    forest_explore: {
-      id: 'forest_explore',
-      displayName: 'Emerald Sprint (Forest)',
+    forest_1: {
+      id: 'forest_1',
+      label: 'Green Forest (Tier 1)',
+      displayName: 'Green Forest — Emerald Sprint',
       bpm: 138,
       looping: true,
       gain: 0.78,
       boomboxSelectable: true,
-      customPackClipIds: ['bgm_forest_explore', 'music_forest', 'forest_theme', 'forest_explore'],
+      customPackClipIds: ['bgm_forest_1', 'bgm_forest_explore', 'music_forest', 'forest_1'],
+    },
+    forest_2: {
+      id: 'forest_2',
+      label: 'Deep Forest (Tier 2)',
+      displayName: 'Deep Forest — Twilight Canopy',
+      bpm: 142,
+      looping: true,
+      gain: 0.78,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_forest_2', 'music_forest_2', 'forest_2'],
+    },
+    forest_3: {
+      id: 'forest_3',
+      label: 'Cursed Forest (Tier 3)',
+      displayName: 'Cursed Forest — Crimson Drive',
+      bpm: 150,
+      looping: true,
+      gain: 0.81,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_forest_3', 'music_forest_3', 'forest_3'],
     },
     forest_boss: {
       id: 'forest_boss',
+      label: 'Wrath of Lil Bark (Forest Boss)',
       displayName: 'Wrath of Lil Bark',
       bpm: 156,
       looping: true,
@@ -864,17 +1292,129 @@ export const MUSIC_TRACK_MANIFEST: Readonly<Record<MusicTrackId, MusicTrackManif
       boomboxSelectable: true,
       customPackClipIds: ['bgm_forest_boss', 'music_boss', 'boss_theme', 'forest_boss'],
     },
-    final_swarm: {
-      id: 'final_swarm',
-      displayName: 'Spooky Steve Approaches',
-      bpm: 172,
+    desert_1: {
+      id: 'desert_1',
+      label: 'Crusty Desert (Tier 1)',
+      displayName: 'Crusty Desert — Phrygian Dunes',
+      bpm: 134,
+      looping: true,
+      gain: 0.78,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_desert_1', 'music_desert', 'desert_1'],
+    },
+    desert_2: {
+      id: 'desert_2',
+      label: 'Twilight Desert (Tier 2)',
+      displayName: 'Twilight Desert — Nocturnal Oasis',
+      bpm: 140,
+      looping: true,
+      gain: 0.79,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_desert_2', 'music_desert_2', 'desert_2'],
+    },
+    desert_3: {
+      id: 'desert_3',
+      label: 'Scorched Desert (Tier 3)',
+      displayName: 'Scorched Desert — Blazing Dunes',
+      bpm: 152,
+      looping: true,
+      gain: 0.82,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_desert_3', 'music_desert_3', 'desert_3'],
+    },
+    desert_boss: {
+      id: 'desert_boss',
+      label: 'Pharaoh Anubis (Desert Boss)',
+      displayName: 'Judgment of Pharaoh Anubis',
+      bpm: 158,
+      looping: true,
+      gain: 0.85,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_desert_boss', 'music_desert_boss', 'desert_boss'],
+    },
+    graveyard: {
+      id: 'graveyard',
+      label: 'Haunted Maze (Graveyard)',
+      displayName: 'Haunted Maze — Crypt Organ',
+      bpm: 128,
+      looping: true,
+      gain: 0.78,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_graveyard', 'music_graveyard', 'graveyard'],
+    },
+    graveyard_boss: {
+      id: 'graveyard_boss',
+      label: "Big Bob's Cathedral (Graveyard Boss)",
+      displayName: "Big Bob's Spectral Frenzy",
+      bpm: 162,
       looping: true,
       gain: 0.86,
       boomboxSelectable: true,
+      customPackClipIds: ['bgm_graveyard_boss', 'music_big_bob', 'graveyard_boss'],
+    },
+    final_boss: {
+      id: 'final_boss',
+      label: 'Obsidian Colosseum (Final Boss)',
+      displayName: 'Obsidian Colosseum Anthem',
+      bpm: 168,
+      looping: true,
+      gain: 0.88,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_final_boss', 'music_final_boss', 'final_boss'],
+    },
+    final_swarm: {
+      id: 'final_swarm',
+      label: 'Spooky Steve Overdrive (Final Swarm)',
+      displayName: 'Spooky Steve Panic Overdrive',
+      bpm: 174,
+      looping: true,
+      gain: 0.87,
+      boomboxSelectable: true,
       customPackClipIds: ['bgm_final_swarm', 'music_final_swarm', 'final_swarm'],
+    },
+    calcium: {
+      id: 'calcium',
+      label: 'Calcium — Skate-Punk Shredder',
+      displayName: 'Calcium — Bone Skate-Punk',
+      bpm: 164,
+      looping: true,
+      gain: 0.82,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_calcium', 'music_calcium', 'calcium'],
+    },
+    megachad: {
+      id: 'megachad',
+      label: 'Megachad — Heroic Synth-Brawn',
+      displayName: 'Megachad — Absolute Flex',
+      bpm: 132,
+      looping: true,
+      gain: 0.82,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_megachad', 'music_megachad', 'megachad'],
+    },
+    dicy: {
+      id: 'dicy',
+      label: 'Dicehead — Funky Jazz-Chip',
+      displayName: 'Dicehead — High Roller Groove',
+      bpm: 146,
+      looping: true,
+      gain: 0.8,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_dicy', 'music_dicy', 'music_dicehead', 'dicy'],
+    },
+    space: {
+      id: 'space',
+      label: 'Spaceman — Cosmic Arpeggios',
+      displayName: 'Spaceman — Zero-G Drift',
+      bpm: 126,
+      looping: true,
+      gain: 0.78,
+      boomboxSelectable: true,
+      customPackClipIds: ['bgm_space', 'music_space', 'music_spaceman', 'space'],
     },
     victory: {
       id: 'victory',
+      label: 'Bonk Triumph (Victory)',
       displayName: 'Bonk Triumph',
       bpm: 136,
       looping: false,
@@ -884,6 +1424,7 @@ export const MUSIC_TRACK_MANIFEST: Readonly<Record<MusicTrackId, MusicTrackManif
     },
     game_over: {
       id: 'game_over',
+      label: 'Shattered Crown (Game Over)',
       displayName: 'Shattered Crown',
       bpm: 96,
       looping: false,
@@ -893,10 +1434,28 @@ export const MUSIC_TRACK_MANIFEST: Readonly<Record<MusicTrackId, MusicTrackManif
     },
   });
 
+/**
+ * All 18 Boombox selector descriptors (`auto` + all 17 looping OST tracks)
+ * formatted with `{ id, label }` and full manifest metadata for the UI selector.
+ */
+export const BOOMBOX_TRACK_LIST: readonly BoomboxTrackDescriptor[] = Object.freeze([
+  Object.freeze({
+    id: 'auto' as const,
+    label: 'Auto (Adaptive Biome)',
+    displayName: 'Auto (Adaptive Biome)',
+    bpm: 0,
+    looping: true,
+    gain: 1.0,
+    boomboxSelectable: true,
+    customPackClipIds: [],
+  }),
+  ...Object.values(MUSIC_TRACK_MANIFEST).filter((t) => t.boomboxSelectable),
+]);
+
 export const MUSIC_STATE_TO_TRACK: Readonly<Record<MusicState, MusicTrackId | null>> =
   Object.freeze({
     title: 'title',
-    explore: 'forest_explore',
+    explore: 'forest_1',
     boss: 'forest_boss',
     final_swarm: 'final_swarm',
     victory: 'victory',
@@ -904,79 +1463,149 @@ export const MUSIC_STATE_TO_TRACK: Readonly<Record<MusicState, MusicTrackId | nu
     silent: null,
   });
 
+const LEGACY_TRACK_ALIASES: Readonly<Record<string, MusicTrackId>> = Object.freeze({
+  forest_explore: 'forest_1',
+  forest: 'forest_1',
+  desert_explore: 'desert_1',
+  desert: 'desert_1',
+  graveyard_explore: 'graveyard',
+  big_bob: 'graveyard_boss',
+  anubis: 'desert_boss',
+  lil_bark: 'forest_boss',
+  dicehead: 'dicy',
+  spaceman: 'space',
+});
+
 export function isMusicTrackId(value: string): value is MusicTrackId {
   return Object.prototype.hasOwnProperty.call(MUSIC_TRACK_MANIFEST, value);
 }
 
+/** Normalizes canonical track IDs and legacy Wave 1 aliases (e.g. `forest_explore` -> `forest_1`). */
+export function normalizeMusicTrackId(value: string): MusicTrackId | null {
+  const key = value.trim().toLowerCase();
+  if (isMusicTrackId(key)) return key;
+  return LEGACY_TRACK_ALIASES[key] ?? null;
+}
+
+/** Resolves the adaptive OST track for a biome map, stage tier, and combat state. */
+export function resolveMusicTrackForContext(
+  mapId: MapId,
+  tier: MapTier,
+  state: MusicState,
+): MusicTrackId | null {
+  switch (state) {
+    case 'silent':
+      return null;
+    case 'title':
+      return 'title';
+    case 'victory':
+      return 'victory';
+    case 'game_over':
+      return 'game_over';
+    case 'final_swarm':
+      return 'final_swarm';
+    case 'boss':
+      switch (mapId) {
+        case 'Forest':
+          return 'forest_boss';
+        case 'Desert':
+          return 'desert_boss';
+        case 'Graveyard':
+          return 'graveyard_boss';
+        case 'FinalBossMap':
+          return 'final_boss';
+      }
+      break;
+    case 'explore':
+      switch (mapId) {
+        case 'Forest':
+          return tier === 3 ? 'forest_3' : tier === 2 ? 'forest_2' : 'forest_1';
+        case 'Desert':
+          return tier === 3 ? 'desert_3' : tier === 2 ? 'desert_2' : 'desert_1';
+        case 'Graveyard':
+          return 'graveyard';
+        case 'FinalBossMap':
+          return 'final_boss';
+      }
+      break;
+  }
+  return MUSIC_STATE_TO_TRACK[state];
+}
+
 // ============================================================================
-// 3. WEAPON ID -> WEAPON AUDIO FAMILY RESOLUTION
+// 3. WEAPON ID -> WEAPON AUDIO FAMILY RESOLUTION (ALL 30 WEAPONS)
 // ============================================================================
 
 const WEAPON_FAMILY_EXACT_MAP: Readonly<Record<string, WeaponAudioFamily>> = Object.freeze({
-  // Wave 1 canonical retail IDs
+  // 1-8: Wave 1 core weapons
   weaponfirestaff: 'fire',
-  weaponbone: 'bone',
-  weaponsword: 'sword',
-  weaponaura: 'aura',
-  weaponrevolver: 'revolver',
-  weaponchunkers: 'rock',
-  weaponlightningbolt: 'lightning',
-  weaponsniper: 'sniper',
-  weaponbow: 'bow',
-  // Full 30-weapon catalog (both prefixed and unprefixed normalized forms)
   firestaff: 'fire',
-  flamewalker: 'fire',
-  weaponflamewalker: 'fire',
-  dragonsbreath: 'fire',
-  weapondragonsbreath: 'fire',
+  weaponbone: 'bone',
   bone: 'bone',
-  bananarang: 'bone',
-  weaponbananarang: 'bone',
-  dice: 'bone',
-  weapondice: 'bone',
+  weaponsword: 'sword',
   sword: 'sword',
-  katana: 'sword',
-  weaponkatana: 'sword',
-  axe: 'sword',
-  weaponaxe: 'sword',
-  scythe: 'sword',
-  weaponscythe: 'sword',
-  corruptedsword: 'sword',
-  weaponcorruptedsword: 'sword',
-  dexecutioner: 'sword',
-  weapondexecutioner: 'sword',
-  herosword: 'sword',
-  weaponherosword: 'sword',
-  wirelessdagger: 'sword',
-  weaponwirelessdagger: 'sword',
+  weaponaura: 'aura',
   aura: 'aura',
-  aegis: 'aura',
-  weaponaegis: 'aura',
-  frostwalker: 'aura',
-  weaponfrostwalker: 'aura',
-  blackhole: 'aura',
-  weaponblackhole: 'aura',
-  bloodmagic: 'aura',
-  weaponbloodmagic: 'aura',
-  tornado: 'aura',
-  weapontornado: 'aura',
-  poisonflask: 'aura',
-  weaponpoisonflask: 'aura',
+  weaponrevolver: 'revolver',
   revolver: 'revolver',
-  shotgun: 'revolver',
-  weaponshotgun: 'revolver',
+  weaponchunkers: 'rock',
   chunkers: 'rock',
-  mines: 'rock',
-  weaponmines: 'rock',
-  sluttyrocket: 'rock',
-  weaponsluttyrocket: 'rock',
-  lightningstaff: 'lightning',
+  weaponlightningbolt: 'lightning',
+  lightningbolt: 'lightning',
   weaponlightningstaff: 'lightning',
-  spacenoodle: 'lightning',
-  weaponspacenoodle: 'lightning',
-  sniperrifle: 'sniper',
+  lightningstaff: 'lightning',
+  weaponsniper: 'sniper',
+  sniper: 'sniper',
   weaponsniperrifle: 'sniper',
-  bow: 'bow',
+  sniperrifle: 'sniper',
+
+  // 9-30: Wave 2 full 30-weapon roster (1-to-1 distinct synth families)
+  weaponaegis: 'aegis_clang',
+  aegis: 'aegis_clang',
+  weaponaxe: 'axe_whoosh',
+  axe: 'axe_whoosh',
+  weaponbananarang: 'boomerang_whir',
+  bananarang: 'boomerang_whir',
+  weaponblackhole: 'blackhole_hum',
+  blackhole: 'blackhole_hum',
+  weaponbloodmagic: 'blood_pulse',
+  bloodmagic: 'blood_pulse',
+  weaponbow: 'bow_twang',
+  bow: 'bow_twang',
+  weaponcorruptedsword: 'corrupted_slash',
+  corruptedsword: 'corrupted_slash',
+  weapondexecutioner: 'execution_blade',
+  dexecutioner: 'execution_blade',
+  weapondice: 'dice_rattle',
+  dice: 'dice_rattle',
+  weapondragonsbreath: 'dragon_flame',
+  dragonsbreath: 'dragon_flame',
+  weaponflamewalker: 'flame_trail',
+  flamewalker: 'flame_trail',
+  weaponfrostwalker: 'frost_crack',
+  frostwalker: 'frost_crack',
+  weaponherosword: 'hero_wave',
+  herosword: 'hero_wave',
+  weaponkatana: 'katana_shing',
+  katana: 'katana_shing',
+  weaponmines: 'mine_beep',
+  mines: 'mine_beep',
+  weaponpoisonflask: 'flask_shatter',
+  poisonflask: 'flask_shatter',
+  weaponscythe: 'scythe_reap',
+  scythe: 'scythe_reap',
+  weaponshotgun: 'shotgun_boom',
+  shotgun: 'shotgun_boom',
+  weaponsluttyrocket: 'rocket_launch',
+  sluttyrocket: 'rocket_launch',
+  weaponhomingrockets: 'rocket_launch',
+  homingrockets: 'rocket_launch',
+  weaponspacenoodle: 'noodle_beam',
+  spacenoodle: 'noodle_beam',
+  weapontornado: 'tornado_whoosh',
+  tornado: 'tornado_whoosh',
+  weaponwirelessdagger: 'dagger_zip',
+  wirelessdagger: 'dagger_zip',
 });
 
 export const WEAPON_FAMILY_TO_CUE: Readonly<Record<WeaponAudioFamily, SfxCueId>> = Object.freeze({
@@ -989,6 +1618,28 @@ export const WEAPON_FAMILY_TO_CUE: Readonly<Record<WeaponAudioFamily, SfxCueId>>
   lightning: 'weapon_fire_lightning',
   sniper: 'weapon_fire_sniper',
   bow: 'weapon_fire_bow',
+  aegis_clang: 'weapon_fire_aegis_clang',
+  axe_whoosh: 'weapon_fire_axe_whoosh',
+  boomerang_whir: 'weapon_fire_boomerang_whir',
+  blackhole_hum: 'weapon_fire_blackhole_hum',
+  blood_pulse: 'weapon_fire_blood_pulse',
+  bow_twang: 'weapon_fire_bow_twang',
+  scythe_reap: 'weapon_fire_scythe_reap',
+  shotgun_boom: 'weapon_fire_shotgun_boom',
+  rocket_launch: 'weapon_fire_rocket_launch',
+  noodle_beam: 'weapon_fire_noodle_beam',
+  tornado_whoosh: 'weapon_fire_tornado_whoosh',
+  katana_shing: 'weapon_fire_katana_shing',
+  mine_beep: 'weapon_fire_mine_beep',
+  flask_shatter: 'weapon_fire_flask_shatter',
+  dice_rattle: 'weapon_fire_dice_rattle',
+  dragon_flame: 'weapon_fire_dragon_flame',
+  frost_crack: 'weapon_fire_frost_crack',
+  dagger_zip: 'weapon_fire_dagger_zip',
+  flame_trail: 'weapon_fire_flame_trail',
+  corrupted_slash: 'weapon_fire_corrupted_slash',
+  execution_blade: 'weapon_fire_execution_blade',
+  hero_wave: 'weapon_fire_hero_wave',
 });
 
 export function resolveWeaponAudioFamily(weaponId: string): WeaponAudioFamily {
@@ -996,33 +1647,37 @@ export function resolveWeaponAudioFamily(weaponId: string): WeaponAudioFamily {
   const exact = WEAPON_FAMILY_EXACT_MAP[normalized];
   if (exact) return exact;
 
+  if (normalized.includes('aegis') || normalized.includes('shield')) return 'aegis_clang';
+  if (normalized.includes('axe')) return 'axe_whoosh';
+  if (normalized.includes('banana') || normalized.includes('boomerang')) return 'boomerang_whir';
+  if (normalized.includes('blackhole') || normalized.includes('vortex')) return 'blackhole_hum';
+  if (normalized.includes('blood')) return 'blood_pulse';
+  if (normalized.includes('scythe')) return 'scythe_reap';
+  if (normalized.includes('shotgun')) return 'shotgun_boom';
+  if (normalized.includes('rocket') || normalized.includes('missile')) return 'rocket_launch';
+  if (normalized.includes('noodle') || normalized.includes('beam')) return 'noodle_beam';
+  if (normalized.includes('tornado') || normalized.includes('cyclone')) return 'tornado_whoosh';
+  if (normalized.includes('katana')) return 'katana_shing';
+  if (normalized.includes('mine')) return 'mine_beep';
+  if (normalized.includes('flask') || normalized.includes('poison')) return 'flask_shatter';
+  if (normalized.includes('dice')) return 'dice_rattle';
+  if (normalized.includes('dragon')) return 'dragon_flame';
+  if (normalized.includes('frost') || normalized.includes('ice')) return 'frost_crack';
+  if (normalized.includes('dagger') || normalized.includes('knife')) return 'dagger_zip';
+  if (normalized.includes('flame')) return 'flame_trail';
+  if (normalized.includes('corrupt')) return 'corrupted_slash';
+  if (normalized.includes('dexec') || normalized.includes('exec')) return 'execution_blade';
+  if (normalized.includes('hero')) return 'hero_wave';
   if (normalized.includes('sniper') || normalized.includes('rail')) return 'sniper';
   if (normalized.includes('light') || normalized.includes('bolt') || normalized.includes('zap')) {
     return 'lightning';
   }
-  if (normalized.includes('fire') || normalized.includes('flame') || normalized.includes('dragon')) {
-    return 'fire';
-  }
-  if (normalized.includes('revolver') || normalized.includes('shotgun') || normalized.includes('gun')) {
-    return 'revolver';
-  }
-  if (normalized.includes('chunk') || normalized.includes('rock') || normalized.includes('mine') || normalized.includes('rocket')) {
-    return 'rock';
-  }
-  if (normalized.includes('bone') || normalized.includes('dice') || normalized.includes('banana')) {
-    return 'bone';
-  }
-  if (normalized.includes('bow')) return 'bow';
-  if (
-    normalized.includes('sword') ||
-    normalized.includes('katana') ||
-    normalized.includes('axe') ||
-    normalized.includes('scythe') ||
-    normalized.includes('dagger') ||
-    normalized.includes('dexec')
-  ) {
-    return 'sword';
-  }
+  if (normalized.includes('fire')) return 'fire';
+  if (normalized.includes('revolver') || normalized.includes('gun')) return 'revolver';
+  if (normalized.includes('chunk') || normalized.includes('rock')) return 'rock';
+  if (normalized.includes('bone')) return 'bone';
+  if (normalized.includes('bow')) return 'bow_twang';
+  if (normalized.includes('sword')) return 'sword';
   return 'aura';
 }
 
@@ -1079,10 +1734,13 @@ function mapInteractableKindToCue(kind: InteractableKind): SfxCueId {
       return 'pot_break';
     case 'BossSpawner':
       return 'boss_spawn';
-    case 'ChargeShrine':
     case 'ShrineMoai':
+      return 'moai_blessing';
     case 'ShadyGuy':
+      return 'shady_buy';
     case 'Microwave':
+      return 'microwave_clone';
+    case 'ChargeShrine':
     case 'ShrineGreed':
     case 'ShrineChallenge':
     case 'ShrineCursed':
@@ -1097,7 +1755,8 @@ function mapPhaseChangeToCue(from: GamePhase, to: GamePhase): SfxTriggerRequest 
   if (to === 'paused') return { cueId: 'ui_cancel', intensity: 0.85 };
   if (from === 'paused' && to === 'playing') return { cueId: 'ui_confirm', intensity: 0.85 };
   if (to === 'chest_open') return { cueId: 'chest_open', intensity: 1.0 };
-  if (to === 'merchant' || to === 'microwave') return { cueId: 'ui_confirm', intensity: 0.9 };
+  if (to === 'merchant') return { cueId: 'shady_buy', intensity: 0.9 };
+  if (to === 'microwave') return { cueId: 'microwave_clone', intensity: 0.9 };
   return null;
 }
 
@@ -1139,7 +1798,13 @@ export function mapSimEventToSfxRequests(event: SimEvent): SfxTriggerRequest[] {
       return [{ cueId: 'rail_attach', intensity: 1.0 }];
 
     case 'player_rail_detach':
-      return [{ cueId: 'rail_detach', intensity: event.jumped ? 1.05 : 0.75, pitchScale: event.jumped ? 1.15 : 0.95 }];
+      return [
+        {
+          cueId: 'rail_detach',
+          intensity: event.jumped ? 1.05 : 0.75,
+          pitchScale: event.jumped ? 1.15 : 0.95,
+        },
+      ];
 
     case 'player_jump_pad':
       return [{ cueId: 'jump_pad', intensity: 1.0 }];
@@ -1164,7 +1829,9 @@ export function mapSimEventToSfxRequests(event: SimEvent): SfxTriggerRequest[] {
       return [{ cueId: 'player_dodge', intensity: 1.0 }];
 
     case 'player_heal':
-      return event.amount >= 2 ? [{ cueId: 'heal', intensity: Math.min(1.15, 0.7 + event.amount / 60) }] : [];
+      return event.amount >= 2
+        ? [{ cueId: 'heal', intensity: Math.min(1.15, 0.7 + event.amount / 60) }]
+        : [];
 
     case 'player_level_up':
       return [{ cueId: 'level_up', streak: event.level, intensity: 1.0 }];
@@ -1179,13 +1846,19 @@ export function mapSimEventToSfxRequests(event: SimEvent): SfxTriggerRequest[] {
       return [{ cueId: 'unstuck', intensity: 0.85 }];
 
     case 'weapon_fire':
-      return [{ cueId: resolveWeaponFireCue(event.weaponId), weaponId: event.weaponId, intensity: 1.0 }];
+      return [
+        {
+          cueId: resolveWeaponFireCue(event.weaponId),
+          weaponId: event.weaponId,
+          intensity: 1.0,
+        },
+      ];
 
     case 'weapon_stolen':
-      return [{ cueId: 'weapon_stolen', intensity: 1.0 }];
+      return [{ cueId: 'weapon_stolen', weaponId: event.weaponId, intensity: 1.05 }];
 
     case 'weapon_reclaimed':
-      return [{ cueId: 'weapon_reclaimed', intensity: 1.0 }];
+      return [{ cueId: 'weapon_reclaimed', weaponId: event.weaponId, intensity: 1.05 }];
 
     case 'damage_dealt': {
       if (event.isBonker) {
@@ -1204,7 +1877,13 @@ export function mapSimEventToSfxRequests(event: SimEvent): SfxTriggerRequest[] {
     }
 
     case 'debuff_applied':
-      return [{ cueId: 'debuff', debuff: event.debuff, intensity: Math.min(1.1, 0.75 + event.stacks * 0.08) }];
+      return [
+        {
+          cueId: 'debuff',
+          debuff: event.debuff,
+          intensity: Math.min(1.1, 0.75 + event.stacks * 0.08),
+        },
+      ];
 
     case 'enemy_spawn': {
       if (event.role === 'elite' || event.role === 'miniboss') {
@@ -1214,7 +1893,13 @@ export function mapSimEventToSfxRequests(event: SimEvent): SfxTriggerRequest[] {
     }
 
     case 'enemy_kill': {
-      if (event.role === 'elite' || event.role === 'miniboss' || event.role === 'stage_boss' || event.role === 'crypt_boss' || event.role === 'final_boss') {
+      if (
+        event.role === 'elite' ||
+        event.role === 'miniboss' ||
+        event.role === 'stage_boss' ||
+        event.role === 'crypt_boss' ||
+        event.role === 'final_boss'
+      ) {
         return [{ cueId: 'kill_elite', intensity: 1.05 }];
       }
       return [{ cueId: 'kill', intensity: event.isExecute ? 1.1 : 0.95 }];
@@ -1239,7 +1924,8 @@ export function mapSimEventToSfxRequests(event: SimEvent): SfxTriggerRequest[] {
     case 'interactable_used': {
       const cueId = mapInteractableKindToCue(event.kind);
       const intensity = event.variant === 'golden' ? 1.15 : 1.0;
-      return [{ cueId, intensity }];
+      const pitchScale = event.kind === 'ShrineCursed' ? 0.84 : undefined;
+      return [{ cueId, intensity, pitchScale }];
     }
 
     case 'pylon_charged':

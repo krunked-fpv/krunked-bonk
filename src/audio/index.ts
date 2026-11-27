@@ -1,11 +1,12 @@
 /**
- * KRUNKEDBONK — Audio Module Public Exports
+ * KRUNKEDBONK — Audio Module Public Exports (Wave 2)
  */
 
 export {
   AudioEngine,
   createAudioEngine,
   type AudioSettingsPatch,
+  type MusicContextSnapshot,
 } from './AudioEngine';
 
 export {
@@ -14,17 +15,24 @@ export {
 } from './ProceduralSynth';
 
 export {
+  ALL_WEAPON_IDS,
   AudioSpamFilter,
+  BOOMBOX_TRACK_LIST,
   CONTINUOUS_LOOP_MANIFEST,
   getCustomPackClipCandidates,
   isMusicTrackId,
   mapSimEventToSfxRequests,
   MUSIC_STATE_TO_TRACK,
   MUSIC_TRACK_MANIFEST,
+  normalizeMusicTrackId,
+  resolveMusicTrackForContext,
   resolveWeaponAudioFamily,
   resolveWeaponFireCue,
   SFX_MANIFEST,
+  SOUND_MANIFEST,
   WEAPON_FAMILY_TO_CUE,
+  type BoomboxTrackDescriptor,
+  type BoomboxTrackId,
   type ContinuousLoopDef,
   type ContinuousLoopId,
   type MusicState,
