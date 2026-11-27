@@ -7,10 +7,19 @@ import {
   type SimEvent,
   type SimState,
 } from '../contracts/index';
+import {
+  executeSpecialEnemyAttack,
+  stepBigBobEncounter,
+  stepFinalBossEncounter,
+} from './bosses';
 import { applyDamageToEnemy, isBossLikeEnemy } from './damage';
 import { dispatchItemTrigger } from './items';
-import { onPlayerHurtPassive, tryTriggerMegachadFlex } from './passives';
-import { handleEnemyDeath } from './weapons';
+import {
+  onPlayerDodgePassive,
+  onPlayerHurtPassive,
+  tryTriggerMegachadFlex,
+} from './passives';
+import { handleEnemyDeath, tryBlockWithAegis } from './weapons';
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -91,8 +100,9 @@ export function buildSpatialEnemyGrid(
 }
 
 /**
- * Resolves incoming damage to the player: Flex block -> Evasion -> Armor/DR ->
- * Overheal/Shield/HP -> Thorns -> Passives -> OnHurt -> Revive / Game Over.
+ * Resolves incoming damage to the player:
+ * Flex block -> WeaponAegis shield block -> Evasion (+Ninja Shadowstep) ->
+ * Armor/DR -> Overheal/Shield/HP -> Thorns -> Passives -> OnHurt -> OnDeathPrevent (ZaWarudo) -> Revive / Game Over.
  */
 export function applyPlayerDamage(
   state: SimState,
@@ -116,7 +126,12 @@ export function applyPlayerDamage(
     return 0;
   }
 
-  // 2. Evasion check (capped at 75%)
+  // 2. WeaponAegis orbiting shield block + shockwave!
+  if (tryBlockWithAegis(state, catalog, rng, events, recalcStats, onKill)) {
+    return 0;
+  }
+
+  // 3. Evasion check (capped at 75%)
   const evasionChance = clamp(player.stats.Evasion, 0, EVASION_CAP);
   if (evasionChance > 0 && rng() < evasionChance) {
     player.invulnTimer = Math.max(player.invulnTimer, 0.25);
@@ -125,6 +140,8 @@ export function applyPlayerDamage(
       tick: state.tick,
       pos: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
     });
+    // Ninja Shadowstep: executes the evaded attacker!
+    onPlayerDodgePassive(state, catalog, attacker, rng, events, onKill, recalcStats);
     dispatchItemTrigger(
       state,
       catalog,
@@ -136,13 +153,13 @@ export function applyPlayerDamage(
     return 0;
   }
 
-  // 3. Armor DR + flat DamageReduction
+  // 4. Armor DR + flat DamageReduction
   const armorDR = computeArmorDR(player.stats.Armor);
   const flatDR = clamp(player.stats.DamageReduction, 0, 0.6);
   let remaining = Math.max(1, rawDamage * (1 - armorDR) * (1 - flatDR));
   const totalIncoming = remaining;
 
-  // 4. Overheal -> Shield -> HP absorption
+  // 5. Overheal -> Shield -> HP absorption
   let blockedByShield = 0;
   if (player.overheal > 0) {
     const absorbed = Math.min(player.overheal, remaining);
@@ -173,7 +190,7 @@ export function applyPlayerDamage(
     remainingHp: Math.round(player.hp * 10) / 10,
   });
 
-  // 5. Thorns reflection damage
+  // 6. Thorns reflection damage
   if (attacker && attacker.hp > 0 && player.stats.Thorns > 0) {
     applyDamageToEnemy(
       state,
@@ -192,7 +209,7 @@ export function applyPlayerDamage(
     );
   }
 
-  // 6. Character passives (e.g. halve Calcium SpeedDemon meter) & OnHurt items
+  // 7. Character passives (Calcium SpeedDemon halve, Athena LockIn update) & OnHurt items
   onPlayerHurtPassive(state, recalcStats);
   dispatchItemTrigger(
     state,
@@ -209,7 +226,7 @@ export function applyPlayerDamage(
     events,
   );
 
-  // 7. Death & Revive handling
+  // 8. Death & ZaWarudo / Revive handling
   if (player.hp <= 0) {
     dispatchItemTrigger(
       state,
@@ -222,16 +239,15 @@ export function applyPlayerDamage(
 
     if (player.revivesLeft > 0) {
       player.revivesLeft -= 1;
-      player.hp = Math.max(1, Math.round(player.maxHp * 0.5));
+      player.hp = Math.max(1, Math.round(player.maxHp * 0.6));
       player.shield = player.maxShield;
-      player.invulnTimer = 2.5;
-      // Push enemies back on revive
+      player.invulnTimer = 3.0;
       for (let i = 0; i < state.enemies.length; i++) {
         const e = state.enemies[i];
         const dx = e.pos.x - player.pos.x;
         const dz = e.pos.z - player.pos.z;
         const dist = Math.hypot(dx, dz);
-        if (dist < 12 && dist > 0.01) {
+        if (dist < 14 && dist > 0.01) {
           e.vel.x += (dx / dist) * 18;
           e.vel.z += (dz / dist) * 18;
         }
@@ -321,7 +337,6 @@ function stepEnemyDebuffs(
         if (enemy.hp <= 0) break;
       }
     } else if (d.type === 'Bloodmark' && d.stacks >= 5) {
-      // Detonate max-stack Bloodmark burst
       const burstDmg = Math.max(20, enemy.maxHp * (bossLike ? 0.03 : 0.14));
       enemy.debuffs.splice(i, 1);
       applyDamageToEnemy(
@@ -368,48 +383,10 @@ function stepEnemyDebuffs(
   return { frozenHard, speedFactor };
 }
 
-function spawnEntRootSpikes(
-  state: SimState,
-  boss: EnemyState,
-  terrain: ITerrainSampler,
-  rng: () => number,
-): void {
-  const player = state.player;
-  const spikeCount = 4;
-  for (let k = 0; k < spikeCount; k++) {
-    const leadTime = 0.25 + k * 0.28;
-    const jitterX = (rng() - 0.5) * 3.0;
-    const jitterZ = (rng() - 0.5) * 3.0;
-    const rawPos = {
-      x: player.pos.x + player.vel.x * leadTime + jitterX,
-      y: player.pos.y,
-      z: player.pos.z + player.vel.z * leadTime + jitterZ,
-    };
-    const clamped = terrain.clampToArena(rawPos, 2);
-    const sample = terrain.sample(clamped.x, clamped.z);
-    state.areaEffects.push({
-      id: state.nextEntityId++,
-      kind: 'pool',
-      weaponId: 'EnemyRootSpikes',
-      ownerIsPlayer: false,
-      pos: { x: clamped.x, y: sample.height + 0.1, z: clamped.z },
-      radius: 2.9,
-      height: 3.5,
-      lifeSec: 0,
-      maxLifeSec: 1.45,
-      tickTimer: 0.85, // Clear telegraph warning before erupting
-      tickIntervalSec: 1.0,
-      damage: boss.damage,
-      element: 'Physical',
-      procCoefficient: 0,
-    });
-  }
-}
-
 /**
- * Steps all enemies: debuffs, fast spatial-grid horde steering & separation,
- * terrain grounding, melee/miniboss/Lil Bark RootSpikes attacks, enemy hazard pools,
- * and player health/shield regen.
+ * Steps all 52 enemy types, Big Bob Darkness phase & Lamps, Final Boss 11-Pylon phases,
+ * debuffs, spatial-grid horde separation, enemy projectiles & hazard pools,
+ * `TheFloorIsLava` challenge scorch, and player HP/Shield regen.
  */
 export function stepEnemies(
   state: SimState,
@@ -424,12 +401,14 @@ export function stepEnemies(
 
   const player = state.player;
 
-  // 1. Player invuln, passive HP regen, and Shield regen
+  // 1. Player invuln, passive HP regen (HP/min normalized cleanly for values >= 10), and Shield regen
   if (player.invulnTimer > 0) {
     player.invulnTimer = Math.max(0, player.invulnTimer - dt);
   }
   if (player.stats.HealthRegen > 0 && player.hp < player.maxHp) {
-    player.hp = Math.min(player.maxHp, player.hp + player.stats.HealthRegen * dt);
+    const regenPerSec =
+      player.stats.HealthRegen >= 10 ? player.stats.HealthRegen / 60 : player.stats.HealthRegen;
+    player.hp = Math.min(player.maxHp, player.hp + regenPerSec * dt);
   }
   if (player.shieldRegenDelay > 0) {
     player.shieldRegenDelay = Math.max(0, player.shieldRegenDelay - dt);
@@ -440,10 +419,21 @@ export function stepEnemies(
     );
   }
 
+  // `TheFloorIsLava` challenge: periodic floor burn if standing grounded & not sliding/grinding!
+  if (
+    state.challengeId === 'TheFloorIsLava' &&
+    player.grounded &&
+    !player.isSliding &&
+    player.railId === null &&
+    state.tick % 45 === 0
+  ) {
+    applyPlayerDamage(state, catalog, 8, null, rng, events, recalcStats);
+    if (player.dead) return;
+  }
+
   // 2. Build spatial grid for O(N) separation
   const grid = buildSpatialEnemyGrid(state.enemies, 6.0);
 
-  // Build quick EnemyDef lookup
   const defById = new Map<string, (typeof catalog.enemies)[number]>();
   for (let i = 0; i < catalog.enemies.length; i++) {
     defById.set(catalog.enemies[i].id, catalog.enemies[i]);
@@ -473,7 +463,6 @@ export function stepEnemies(
     const immobilized = frozenHard || enemy.stunTimer > 0;
     const effectiveSpeed = immobilized ? 0 : enemy.moveSpeed * speedFactor;
 
-    // Determine steering target (player normally, or nearest enemy when Charmed)
     let targetX = player.pos.x;
     let targetZ = player.pos.z;
     let charmedTarget: EnemyState | null = null;
@@ -498,10 +487,12 @@ export function stepEnemies(
     const toZ = targetZ - enemy.pos.z;
     const distToTarget = Math.hypot(toX, toZ) || 0.001;
 
-    let steerX = (toX / distToTarget) * effectiveSpeed;
-    let steerZ = (toZ / distToTarget) * effectiveSpeed;
+    // Ranged units (CactusShooter/Bush) hold light standoff distance when in firing range
+    const holdRange =
+      (enemy.enemyId === 'CactusShooter' || enemy.enemyId === 'Bush') && distToTarget < 14;
+    let steerX = holdRange ? 0 : (toX / distToTarget) * effectiveSpeed;
+    let steerZ = holdRange ? 0 : (toZ / distToTarget) * effectiveSpeed;
 
-    // Spatial-grid separation force so hordes fan cleanly around the player instead of stacking on 1 pixel
     let sepX = 0;
     let sepZ = 0;
     const sepQueryR = enemy.radius * 2.4 + 1.0;
@@ -526,7 +517,6 @@ export function stepEnemies(
       enemy.yaw = Math.atan2(toX, toZ);
     }
 
-    // Smooth knockback decay
     const kbDecay = Math.exp(-8.0 * dt);
     enemy.vel.x *= kbDecay;
     enemy.vel.z *= kbDecay;
@@ -547,6 +537,14 @@ export function stepEnemies(
 
     // Attack cadence
     enemy.attackTimer -= dt * (immobilized ? 0 : speedFactor);
+
+    // Multi-phase Boss Controllers (run every tick even when attackTimer > 0!)
+    if (enemy.enemyId === 'FinalBoss') {
+      stepFinalBossEncounter(state, catalog, enemy, terrain, dt, rng, events);
+    } else if (enemy.enemyId === 'GhostKing') {
+      stepBigBobEncounter(state, enemy, terrain, dt, rng);
+    }
+
     if (enemy.attackTimer > 0 || immobilized) continue;
 
     // Charmed enemy strikes other enemy
@@ -565,17 +563,16 @@ export function stepEnemies(
 
     const attackRange = (def?.attackRange ?? 1.6) + player.capsuleRadius;
 
-    // EntStage1 (Lil Bark) RootSpikes special attack at medium/close range
-    if (enemy.enemyId === 'EntStage1' && distToTarget <= 28) {
-      spawnEntRootSpikes(state, enemy, terrain, rng);
-      if (distToTarget <= attackRange) {
+    // Signature biome boss, miniboss, and ranged enemy attacks
+    if (executeSpecialEnemyAttack(state, enemy, distToTarget, terrain, rng)) {
+      if (distToTarget <= Math.min(attackRange, 6.0)) {
         applyPlayerDamage(state, catalog, enemy.damage, enemy, rng, events, recalcStats);
       }
       enemy.attackTimer = def?.attackCooldownSec ?? 2.0;
       continue;
     }
 
-    // Miniboss ground slam telegraph when closing in
+    // Standard miniboss ground slam telegraph
     if (enemy.role === 'miniboss' && distToTarget <= attackRange + 3.0) {
       state.areaEffects.push({
         id: state.nextEntityId++,
@@ -607,7 +604,39 @@ export function stepEnemies(
     }
   }
 
-  // 4. Step enemy-owned AreaEffects (Lil Bark RootSpikes, Miniboss Slams)
+  // 4. Step enemy-owned Projectiles (FinalBoss homing/shooty orbs, Pharaoh lasers, CactusShooter, Bush)
+  for (let i = state.projectiles.length - 1; i >= 0; i--) {
+    const proj = state.projectiles[i];
+    if (proj.ownerIsPlayer) continue;
+
+    // Homing steering toward player for FinalBossHomingOrb
+    if (proj.homingTargetId === -1) {
+      const spd = Math.hypot(proj.vel.x, proj.vel.y, proj.vel.z) || 16;
+      const dx = player.pos.x - proj.pos.x;
+      const dy = player.pos.y + 1.2 - proj.pos.y;
+      const dz = player.pos.z - proj.pos.z;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const turn = Math.min(1, dt * 3.5);
+      const nx = proj.vel.x / spd + (dx / len - proj.vel.x / spd) * turn;
+      const ny = proj.vel.y / spd + (dy / len - proj.vel.y / spd) * turn;
+      const nz = proj.vel.z / spd + (dz / len - proj.vel.z / spd) * turn;
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      proj.vel.x = (nx / nLen) * spd;
+      proj.vel.y = (ny / nLen) * spd;
+      proj.vel.z = (nz / nLen) * spd;
+    }
+
+    const hitR = proj.radius + player.capsuleRadius;
+    const dx = proj.pos.x - player.pos.x;
+    const dy = proj.pos.y - (player.pos.y + 1.2);
+    const dz = proj.pos.z - player.pos.z;
+    if (dx * dx + dy * dy + dz * dz <= hitR * hitR) {
+      applyPlayerDamage(state, catalog, proj.damage, null, rng, events, recalcStats);
+      state.projectiles.splice(i, 1);
+    }
+  }
+
+  // 5. Step enemy-owned AreaEffects (RootSpikes, SandPillars, GhostSpikes, Meteors, BoomerBlast, Slams)
   for (let i = state.areaEffects.length - 1; i >= 0; i--) {
     const ae = state.areaEffects[i];
     if (ae.ownerIsPlayer) continue;
@@ -630,7 +659,7 @@ export function stepEnemies(
     }
   }
 
-  // 5. Compact dead enemies cleanly
+  // 6. Compact dead enemies cleanly
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     if (state.enemies[i].hp <= 0) {
       state.enemies.splice(i, 1);

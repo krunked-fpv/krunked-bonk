@@ -1,58 +1,25 @@
 import type { MetaShopUpgradeDef, ShopUpgradeId } from '../contracts/index';
 
 /**
- * Exact 8 Meta Shop Upgrades with retail-calibrated Silver pricing.
+ * Exact 8 Meta Shop Upgrades calibrated 1:1 to oracle.json costs & formulas:
+ * `cost(rank) = Math.round((basePrice + rank * linearIncrease) * Math.pow(exponentialMultiplier, rank))`
  */
+const LINEAR_INCREASE_BY_ID: Readonly<Record<ShopUpgradeId, number>> = Object.freeze({
+  SilverMultiplier: 5,
+  Refresh: 5,
+  Skip: 5,
+  Banish: 5,
+  Weapons: 100,
+  Tomes: 100,
+  Boombox: 0,
+  Toggler: 0,
+});
+
 export const SHOP_UPGRADES: readonly MetaShopUpgradeDef[] = Object.freeze([
-  {
-    id: 'Weapons',
-    displayName: 'Weapon Slots',
-    description: 'Permanently increases maximum equipped Weapon slots per run (base 2, up to 4).',
-    maxRank: 2,
-    baseSilverCost: 25,
-    costGrowthMult: 1.8,
-    specialEffect: 'weapon_slot',
-  },
-  {
-    id: 'Tomes',
-    displayName: 'Tome Slots',
-    description: 'Permanently increases maximum equipped Tome slots per run (base 2, up to 4).',
-    maxRank: 2,
-    baseSilverCost: 35,
-    costGrowthMult: 1.8,
-    specialEffect: 'tome_slot',
-  },
-  {
-    id: 'Refresh',
-    displayName: 'Draft Rerolls',
-    description: 'Grants +1 Level-Up Draft Reroll charge per rank.',
-    maxRank: 6,
-    baseSilverCost: 8,
-    costGrowthMult: 1.3,
-    specialEffect: 'refresh',
-  },
-  {
-    id: 'Skip',
-    displayName: 'Draft Skips',
-    description: 'Grants +1 Level-Up Draft Skip charge per rank (refunds 25% XP).',
-    maxRank: 6,
-    baseSilverCost: 8,
-    costGrowthMult: 1.3,
-    specialEffect: 'skip',
-  },
-  {
-    id: 'Banish',
-    displayName: 'Draft Banishes',
-    description: 'Grants +1 Draft Banish charge per rank to remove unwanted choices for the run.',
-    maxRank: 6,
-    baseSilverCost: 8,
-    costGrowthMult: 1.3,
-    specialEffect: 'banish',
-  },
   {
     id: 'SilverMultiplier',
     displayName: 'Silver Multiplier',
-    description: 'Permanently increases Silver earned from all runs by +5% per rank.',
+    description: 'Permanently increases Silver earned across all runs (+5% per rank).',
     maxRank: 20,
     baseSilverCost: 5,
     costGrowthMult: 1.25,
@@ -64,9 +31,54 @@ export const SHOP_UPGRADES: readonly MetaShopUpgradeDef[] = Object.freeze([
     specialEffect: 'silver_multiplier',
   },
   {
+    id: 'Refresh',
+    displayName: 'Refresh',
+    description: 'Grants +1 Level-Up Draft Reroll charge per rank.',
+    maxRank: 6,
+    baseSilverCost: 8,
+    costGrowthMult: 1.3,
+    specialEffect: 'refresh',
+  },
+  {
+    id: 'Skip',
+    displayName: 'Skip',
+    description: 'Grants +1 Level-Up Draft Skip charge per rank (refunds 25% XP).',
+    maxRank: 6,
+    baseSilverCost: 8,
+    costGrowthMult: 1.3,
+    specialEffect: 'skip',
+  },
+  {
+    id: 'Banish',
+    displayName: 'Banish',
+    description: 'Grants +1 Draft Banish charge per rank to exclude unwanted upgrades for the run.',
+    maxRank: 6,
+    baseSilverCost: 8,
+    costGrowthMult: 1.3,
+    specialEffect: 'banish',
+  },
+  {
+    id: 'Weapons',
+    displayName: 'Weapon Slots',
+    description: 'Carry more Weapons per run (base 2 slots, up to 4).',
+    maxRank: 2,
+    baseSilverCost: 25,
+    costGrowthMult: 1.0,
+    specialEffect: 'weapon_slot',
+  },
+  {
+    id: 'Tomes',
+    displayName: 'Tome Slots',
+    description: 'Carry more Tomes per run (base 2 slots, up to 4).',
+    maxRank: 2,
+    baseSilverCost: 35,
+    costGrowthMult: 1.0,
+    specialEffect: 'tome_slot',
+  },
+  {
     id: 'Boombox',
     displayName: 'Boombox',
-    description: 'Unlocks custom soundtrack track selection in Settings.',
+    description: 'Manually select any soundtrack track in Options and Pause.',
     maxRank: 1,
     baseSilverCost: 5,
     costGrowthMult: 1.0,
@@ -74,8 +86,8 @@ export const SHOP_UPGRADES: readonly MetaShopUpgradeDef[] = Object.freeze([
   },
   {
     id: 'Toggler',
-    displayName: 'Catalog Toggler',
-    description: 'Unlocks toggling individual unlocked weapons, tomes, and items in the run pool.',
+    displayName: 'Toggler',
+    description: 'Toggle unlocked weapons, tomes, and items on or off in the run draft pool.',
     maxRank: 1,
     baseSilverCost: 50,
     costGrowthMult: 1.0,
@@ -91,7 +103,9 @@ export function getShopUpgradeById(id: ShopUpgradeId): MetaShopUpgradeDef | unde
   return SHOP_UPGRADE_BY_ID.get(id);
 }
 
+/** Exact oracle.json pricing formula matching every rank cost 1:1. */
 export function getShopUpgradeCost(def: MetaShopUpgradeDef, currentRank: number): number {
   const rank = Math.max(0, Math.floor(currentRank));
-  return Math.round(def.baseSilverCost * Math.pow(def.costGrowthMult, rank));
+  const linearIncrease = LINEAR_INCREASE_BY_ID[def.id] ?? 0;
+  return Math.round((def.baseSilverCost + rank * linearIncrease) * Math.pow(def.costGrowthMult, rank));
 }

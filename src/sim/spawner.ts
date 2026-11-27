@@ -9,7 +9,9 @@ import type {
   SimState,
   Vec3,
 } from '../contracts/index';
+import { getEnemyById } from '../data/enemies';
 import { STAGE_TIMELINES } from '../data/maps';
+import { ensureFinalBossPylonsInitialized } from './bosses';
 import { dispatchItemTrigger } from './items';
 
 const MAX_NORMAL_ENEMIES = 180;
@@ -84,7 +86,8 @@ export function spawnEnemyEntity(
   events: SimEvent[],
   opts?: SpawnEnemyOptions,
 ): EnemyState | null {
-  const def: EnemyDef | undefined = catalog.enemies.find((e) => e.id === enemyId);
+  const def: EnemyDef | undefined =
+    catalog.enemies.find((e) => e.id === enemyId) ?? getEnemyById(enemyId);
   if (!def) return null;
 
   const scaling = computeMinuteScaling(state, opts?.challenge);
@@ -97,16 +100,24 @@ export function spawnEnemyEntity(
   const eliteDmgMult = isElite ? 1.4 : 1.0;
   const eliteSizeMult = isElite ? 1.25 : 1.0;
 
-  // Stage bosses preserve their iconic crisp baseline HP scaled mildly by tier/difficulty
+  // Big Bob (500k HP), Final Boss (25k HP), and Spooky Steve preserve iconic exact HP curves
   const hpMultiplier =
-    def.id === 'GhostInvincible'
-      ? 1.0
+    def.id === 'GhostInvincible' || def.id === 'GhostKing' || def.id === 'FinalBoss'
+      ? (opts?.challenge?.rules.enemyHpMultiplier ?? 1)
       : isBoss
-        ? (1 + (state.mapTier - 1) * 0.75) * Math.max(1, state.difficultyMultiplier) * (opts?.challenge?.rules.enemyHpMultiplier ?? 1)
+        ? (1 + (state.mapTier - 1) * 0.75) *
+          Math.max(1, state.difficultyMultiplier) *
+          (opts?.challenge?.rules.enemyHpMultiplier ?? 1)
         : scaling.hpScale * eliteHpMult;
 
   const maxHp = Math.max(1, Math.round(def.maxHp * hpMultiplier));
-  const damage = Math.max(1, Math.round(def.damage * (isBoss ? 1 + (state.mapTier - 1) * 0.35 : scaling.dmgScale * eliteDmgMult)));
+  const damage = Math.max(
+    1,
+    Math.round(
+      def.damage *
+        (isBoss ? 1 + (state.mapTier - 1) * 0.35 : scaling.dmgScale * eliteDmgMult),
+    ),
+  );
   const moveSpeed = def.moveSpeed * (isBoss ? 1.0 : scaling.spdScale);
 
   let pos: Vec3;
@@ -144,7 +155,7 @@ export function spawnEnemyEntity(
     eliteTags: isElite ? ['Empowered'] : [],
     debuffs: [],
     phaseIndex: 0,
-    weaponStealCooldown: 0,
+    weaponStealCooldown: def.id === 'GhostKing' ? 18.0 : 0,
   };
 
   state.enemies.push(entity);
@@ -161,7 +172,8 @@ export function spawnEnemyEntity(
 }
 
 /**
- * Summons the current stage's Boss (e.g. `EntStage1` Lil Bark in Forest).
+ * Summons the current stage's Boss (Forest EntStage1/2/3, Desert Pharaoh1/2/3,
+ * Graveyard Big Bob `GhostKing`, FinalBossMap `FinalBoss`), honoring any Boss Curse stacks!
  */
 export function triggerStageBoss(
   state: SimState,
@@ -178,20 +190,38 @@ export function triggerStageBoss(
 
   const mapDef = catalog.maps.find((m) => m.id === state.mapId);
   const bossId =
-    mapDef?.stageBossIds[state.mapTier] ??
-    mapDef?.stageBossIds[1] ??
-    'EntStage1';
-  const bossDef = catalog.enemies.find((e) => e.id === bossId);
+    state.mapId === 'FinalBossMap'
+      ? 'FinalBoss'
+      : state.mapId === 'Graveyard'
+        ? 'GhostKing'
+        : mapDef?.stageBossIds[state.mapTier] ?? mapDef?.stageBossIds[1] ?? 'EntStage1';
+
+  const bossDef = catalog.enemies.find((e) => e.id === bossId) ?? getEnemyById(bossId);
+  const roleOverride: EnemyRole =
+    bossId === 'FinalBoss' ? 'final_boss' : bossId === 'GhostKing' ? 'crypt_boss' : 'stage_boss';
+
   const entity = spawnEnemyEntity(state, catalog, bossId, terrain, rng, events, {
     pos: opts?.pos,
-    roleOverride: 'stage_boss',
+    roleOverride,
     challenge: opts?.challenge,
   });
 
   if (!entity) return null;
 
   state.stageBossId = entity.id;
-  state.activeBannerText = `STAGE BOSS: ${(bossDef?.displayName ?? bossId).toUpperCase()} AWAKENS!`;
+  if (bossId === 'FinalBoss') {
+    state.finalBossId = entity.id;
+    ensureFinalBossPylonsInitialized(state, terrain);
+  } else if (bossId === 'GhostKing') {
+    state.bigBobId = entity.id;
+  }
+
+  state.activeBannerText =
+    bossId === 'GhostKing'
+      ? 'BIG BOB AWAKENS — PREPARE FOR DARKNESS!'
+      : bossId === 'FinalBoss'
+        ? 'CITADEL OVERLORD DESCENDS — 11 PYLONS AWAIT!'
+        : `STAGE BOSS: ${(bossDef?.displayName ?? bossId).toUpperCase()} AWAKENS!`;
 
   events.push({
     type: 'boss_spawn',
@@ -210,6 +240,33 @@ export function triggerStageBoss(
     rng,
     events,
   );
+
+  // ShrineCursed Boss Curse: spawn extra Stage Bosses for each Boss Curse invoked!
+  if (roleOverride === 'stage_boss') {
+    const curseBuffs = state.player.buffs.filter((b) => b.id.startsWith('cursed_shrine:'));
+    for (let c = 0; c < curseBuffs.length; c++) {
+      const ang = (c + 1) * 2.1;
+      const extra = spawnEnemyEntity(state, catalog, bossId, terrain, rng, events, {
+        pos: {
+          x: entity.pos.x + Math.cos(ang) * 10,
+          y: entity.pos.y,
+          z: entity.pos.z + Math.sin(ang) * 10,
+        },
+        roleOverride: 'stage_boss',
+        challenge: opts?.challenge,
+      });
+      if (extra) {
+        events.push({
+          type: 'boss_spawn',
+          tick: state.tick,
+          entityId: extra.id,
+          enemyId: extra.enemyId,
+          displayName: `Cursed ${bossDef?.displayName ?? bossId}`,
+          pos: { ...extra.pos },
+        });
+      }
+    }
+  }
 
   return entity;
 }
@@ -263,14 +320,29 @@ function getContinuousPoolForTime(state: Readonly<SimState>): readonly string[] 
     return ['Ghost', 'Ghost', 'GhostPurple'];
   }
 
-  if (minutes < 1.5) return ['Goblin', 'Goblin', 'Slime'];
-  if (minutes < 3.5) return ['Goblin', 'Skeleton', 'Slime'];
-  if (minutes < 6.0) return ['Goblin', 'Skeleton', 'Slime', 'GoblinStrong'];
-  return ['Skeleton', 'GoblinStrong', 'Slime', 'GoblinStrong'];
+  if (state.mapId === 'Desert') {
+    if (minutes < 1.5) return ['Mummy', 'SkeletonDusty', 'Tumblebone', 'Wisp'];
+    if (minutes < 3.5) return ['Mummy', 'Scorpion', 'CactusShooter', 'ArmoredSkeletonDusty', 'Tumblebone'];
+    if (minutes < 6.0) return ['ScorpionMedium', 'MummyTank', 'CactusShooter', 'Scorpion', 'GoldenSkeleton'];
+    return ['MummyAncient', 'MummyTank', 'ScorpionMedium', 'CactusShooter', 'XpSkeleton'];
+  }
+
+  if (state.mapId === 'Graveyard') {
+    if (minutes < 2.0) return ['Ghost', 'Zombie', 'Head', 'Skeleton'];
+    if (minutes < 5.0) return ['Ghost', 'Ghoul', 'Zombie', 'GreaterGhost', 'ArmoredSkeleton'];
+    if (minutes < 10.0) return ['GreaterGhost', 'GhostPurple', 'Zombie', 'Head', 'GoldenSkeleton'];
+    return ['GhostPurple', 'GhostRed', 'GreaterGhost', 'ArmoredSkeleton', 'XpSkeleton'];
+  }
+
+  // Forest default
+  if (minutes < 1.5) return ['Goblin', 'Slime', 'Bee'];
+  if (minutes < 3.5) return ['Goblin', 'Skeleton', 'Slime', 'Ghoul', 'BoomerSpider'];
+  if (minutes < 6.0) return ['GoblinStrong', 'ArmoredSkeleton', 'Golem', 'BoomerSpider', 'FrogGreen'];
+  return ['GoblinTank', 'GoblinStrong', 'ArmoredSkeleton', 'Golem', 'GoldenSkeleton', 'XpSkeleton'];
 }
 
 /**
- * Deterministic per-tick stage timeline, continuous pacing, scripted Forest events,
+ * Deterministic per-tick stage timeline, continuous biome pacing, FinalBossMap auto-summon,
  * and Final Swarm escalation.
  */
 export function stepSpawner(
@@ -284,12 +356,24 @@ export function stepSpawner(
 ): void {
   if (state.phase !== 'playing' || state.player.dead) return;
 
+  // FinalBossMap: auto-spawn FinalBoss immediately & park the 11 pylons until shield phases
+  if (state.mapId === 'FinalBossMap') {
+    ensureFinalBossPylonsInitialized(state, terrain);
+    if (state.finalBossId === null && !state.stageBossDefeated) {
+      triggerStageBoss(state, catalog, terrain, rng, events, {
+        pos: { x: 0, y: 0, z: -32 },
+        challenge,
+      });
+    }
+    return;
+  }
+
   // 1. Trigger Final Swarm when countdown hits 0:00
   if (!state.finalSwarmActive && state.simTimeSec >= state.stageDurationSec) {
     triggerFinalSwarm(state, catalog, terrain, rng, events, challenge);
   }
 
-  // 2. Scripted stage timeline milestones (MB@180s, Swarm@240s, Swarm@420s, MB@480s)
+  // 2. Scripted biome stage timeline milestones
   const timeline = STAGE_TIMELINES[state.mapId] ?? [];
   for (let i = 0; i < timeline.length; i++) {
     const ev = timeline[i];
@@ -308,22 +392,23 @@ export function stepSpawner(
     }
   }
 
-  // 3. Continuous enemy pacing (purely deterministic from state.tick, zero external timers)
+  // 3. Continuous enemy pacing (purely deterministic from state.tick)
   const cap = state.finalSwarmActive ? MAX_SWARM_ENEMIES : MAX_NORMAL_ENEMIES;
   if (state.enemies.length >= cap) return;
 
   const minutes = state.simTimeSec / 60;
+  const swarmSpeedup = state.challengeId === 'Swarm' ? 0.72 : 1.0;
   const spawnIntervalTicks = state.finalSwarmActive
     ? 18
-    : Math.max(28, Math.round(85 - minutes * 6));
+    : Math.max(20, Math.round((85 - minutes * 6) * swarmSpeedup));
 
   if (state.tick <= 0 || state.tick % spawnIntervalTicks !== 0) return;
 
   const pool = getContinuousPoolForTime(state);
   const packSize = state.finalSwarmActive
     ? 4
-    : Math.min(5, 1 + Math.floor(minutes / 2.2) + (state.mapTier - 1));
-  const eliteChance = state.finalSwarmActive ? 0 : Math.min(0.32, 0.06 + minutes * 0.018);
+    : Math.min(6, 1 + Math.floor(minutes / 2.2) + (state.mapTier - 1) + (state.challengeId === 'Swarm' ? 1 : 0));
+  const eliteChance = state.finalSwarmActive ? 0 : Math.min(0.35, 0.06 + minutes * 0.018);
 
   const anchor = chooseSpawnRingPosition(state, terrain, rng, 25, 40);
   for (let i = 0; i < packSize; i++) {
