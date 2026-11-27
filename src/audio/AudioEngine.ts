@@ -1,35 +1,39 @@
 /**
- * KRUNKEDBONK — Web Audio Engine, Spam-Filtered Mixer & Dual-Mode Custom Pack Player
+ * KRUNKEDBONK — Web Audio Engine, Spam-Filtered Mixer, Adaptive Biome OST & Boombox Engine (Wave 2)
  *
  * Implements IAudioEngine (src/contracts/index.ts):
  * - Safe browser autoplay unlock on first user gesture; graceful no-op in headless Node.
  * - Dual-mode playback: plays decoded clips from IAssetPack when available, seamlessly
  *   falling back to ProceduralSynth & procedural step-sequencer tracks with zero latency.
  * - AudioSpamFilter micro-cooldowns & polyphony caps + master DynamicsCompressorNode limiter
- *   + separate Master / Music / SFX / Mute gain nodes.
- * - Continuous movement loop modulation via setContinuousMovement(speed, isSliding, isGrinding).
- * - Wave 2 Boombox track override hook via setBoomboxTrack(trackId).
+ *   + separate Master / Music / SFX / Mute / Duck gain nodes.
+ * - Continuous movement & ambient loop modulation (`slide_loop`, `rail_grind_loop`, `desert_wind`).
+ * - Adaptive biome/tier/boss music switching via `setMusicContext(mapId, tier, state)` with full
+ *   Boombox override support (`setBoomboxTrack(trackId)` + 18-track `getAvailableBoomboxTracks()`).
  */
 
 import {
   DEFAULT_RENDER_SETTINGS,
   type IAssetPack,
   type IAudioEngine,
+  type MapId,
+  type MapTier,
   type RenderSettings,
   type SimEvent,
 } from '../contracts/index';
 import { ProceduralSynth } from './ProceduralSynth';
 import {
   AudioSpamFilter,
+  BOOMBOX_TRACK_LIST,
   getCustomPackClipCandidates,
-  isMusicTrackId,
   mapSimEventToSfxRequests,
-  MUSIC_STATE_TO_TRACK,
   MUSIC_TRACK_MANIFEST,
+  normalizeMusicTrackId,
+  resolveMusicTrackForContext,
   SFX_MANIFEST,
+  type BoomboxTrackDescriptor,
   type MusicState,
   type MusicTrackId,
-  type MusicTrackManifestEntry,
   type SfxCueId,
   type SfxTriggerRequest,
 } from './soundManifest';
@@ -41,6 +45,12 @@ export type AudioSettingsPatch = Pick<
 > & {
   boomboxTrack?: string;
 };
+
+export interface MusicContextSnapshot {
+  readonly mapId: MapId;
+  readonly tier: MapTier;
+  readonly state: MusicState;
+}
 
 type AudioContextConstructor = new () => AudioContext;
 
@@ -99,8 +109,10 @@ export class AudioEngine implements IAudioEngine {
     audioMuted: DEFAULT_RENDER_SETTINGS.audioMuted,
   };
 
+  private currentMapId: MapId = 'Forest';
+  private currentMapTier: MapTier = 1;
   private musicState: MusicState = 'silent';
-  private boomboxTrack = 'auto';
+  private boomboxTrack: 'auto' | MusicTrackId = 'auto';
   private musicDuckFactor = 1.0;
   private activeTrackId: MusicTrackId | null = null;
   private finalSwarmActive = false;
@@ -110,10 +122,12 @@ export class AudioEngine implements IAudioEngine {
   private disposed = false;
   private gestureCleanup: (() => void) | null = null;
 
-  // Tracked continuous movement state so pre-unlock calls apply cleanly on unlock
+  // Tracked continuous movement & ambient state so pre-unlock calls apply cleanly on unlock
   private moveSpeed = 0;
   private moveSliding = false;
   private moveGrinding = false;
+  private desertWindIntensity = 0;
+  private desertWindManualOverride: number | null = null;
 
   // Shrine continuous charge ramp throttle
   private lastShrineStep = -1;
@@ -125,8 +139,6 @@ export class AudioEngine implements IAudioEngine {
   public init(): void {
     if (this.disposed || this.initialized) return;
     this.initialized = true;
-
-    // Attach safe one-time browser unlock gesture listeners if DOM event target exists
     this.attachGestureUnlockListeners();
   }
 
@@ -149,6 +161,7 @@ export class AudioEngine implements IAudioEngine {
       this.applyMixGains(false);
       this.syncActiveMusicTrack(true);
       this.synth?.setContinuousMovement(this.moveSpeed, this.moveSliding, this.moveGrinding);
+      this.synth?.setDesertWind(this.desertWindIntensity);
     };
 
     if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
@@ -196,7 +209,7 @@ export class AudioEngine implements IAudioEngine {
   }
 
   // ==========================================================================
-  // EVENT CONSUMPTION & SFX PLAYBACK
+  // EVENT CONSUMPTION, SFX & CONTINUOUS AMBIENT LOOPS
   // ==========================================================================
 
   public consumeEvents(events: readonly SimEvent[]): void {
@@ -217,7 +230,7 @@ export class AudioEngine implements IAudioEngine {
     }
   }
 
-  /** Play an explicit SFX cue (e.g., UI navigation, menus, shrine charge tick). */
+  /** Play an explicit SFX cue (e.g., UI navigation, menus, lamp_lit, shady_buy, shrine ticks). */
   public playSfx(
     cueId: SfxCueId,
     options?: Omit<SfxTriggerRequest, 'cueId'>,
@@ -246,6 +259,28 @@ export class AudioEngine implements IAudioEngine {
   }
 
   /**
+   * Ambient `desert_wind` loop hook. Pass `null` to return to automatic biome-driven wind,
+   * or a normalized intensity `[0..1]` to drive the desert wind ambience directly.
+   */
+  public setDesertWind(intensity: number | null): void {
+    if (intensity === null) {
+      this.desertWindManualOverride = null;
+      this.syncAmbientDesertWind();
+      return;
+    }
+    const clamped = clamp01(intensity);
+    this.desertWindManualOverride = clamped;
+    this.desertWindIntensity = clamped;
+    if (!this.disposed && this.synth && this.ctx && this.ctx.state === 'running') {
+      this.synth.setDesertWind(clamped);
+    }
+  }
+
+  public getDesertWindIntensity(): number {
+    return this.desertWindIntensity;
+  }
+
+  /**
    * Optional helper for smooth ChargeShrine ramp audio when standing inside a shrine ring.
    * Pass `null` when not charging a shrine.
    */
@@ -262,29 +297,40 @@ export class AudioEngine implements IAudioEngine {
   }
 
   // ==========================================================================
-  // ADAPTIVE MUSIC & BOOMBOX HOOK
+  // ADAPTIVE BIOME / TIER / BOSS MUSIC & BOOMBOX ENGINE
   // ==========================================================================
 
-  public setMusicState(state: MusicState): void {
+  /**
+   * Switches adaptive soundtrack using current biome (`mapId`), stage `tier`, and `state`,
+   * while respecting any manual `setBoomboxTrack(trackId)` override (`trackId !== 'auto'`).
+   */
+  public setMusicContext(mapId: MapId, tier: MapTier, state: MusicState): void {
     if (this.disposed) return;
+
+    this.currentMapId = mapId;
+    this.currentMapTier = tier;
+
     if (state === 'title' || state === 'explore') {
       this.finalSwarmActive = false;
     } else if (state === 'final_swarm') {
       this.finalSwarmActive = true;
     }
 
-    if (this.musicState === state && this.activeTrackId === this.resolveDesiredTrackId()) {
-      return;
-    }
     this.musicState = state;
+    this.syncAmbientDesertWind();
     this.syncActiveMusicTrack(false);
   }
 
+  /** Full IAudioEngine compatibility: updates music state using the currently tracked map/tier. */
+  public setMusicState(state: MusicState): void {
+    this.setMusicContext(this.currentMapId, this.currentMapTier, state);
+  }
+
   /**
-   * Wave 2 Boombox hook:
-   * - `'auto'` restores adaptive state-driven soundtrack selection.
-   * - Any valid `MusicTrackId` (`title`, `forest_explore`, `forest_boss`, `final_swarm`,
-   *   `victory`, `game_over`) locks gameplay/menu music to that track until reset to `'auto'`.
+   * Boombox override selector:
+   * - `'auto'` restores adaptive biome/tier/boss soundtrack selection.
+   * - Any valid `MusicTrackId` (including legacy `'forest_explore'` alias) locks playback
+   *   to that track until reset to `'auto'`.
    */
   public setBoomboxTrack(trackId: string): void {
     if (this.disposed) return;
@@ -296,9 +342,10 @@ export class AudioEngine implements IAudioEngine {
       return;
     }
 
-    if (isMusicTrackId(normalized)) {
-      if (this.boomboxTrack === normalized) return;
-      this.boomboxTrack = normalized;
+    const resolved = normalizeMusicTrackId(normalized);
+    if (resolved) {
+      if (this.boomboxTrack === resolved) return;
+      this.boomboxTrack = resolved;
       this.syncActiveMusicTrack(true);
     }
   }
@@ -307,8 +354,12 @@ export class AudioEngine implements IAudioEngine {
     return this.boomboxTrack;
   }
 
-  public getAvailableBoomboxTracks(): readonly MusicTrackManifestEntry[] {
-    return Object.values(MUSIC_TRACK_MANIFEST).filter((t) => t.boomboxSelectable);
+  /**
+   * Returns all 18 `{ id, label }` Boombox track descriptors (`auto` + all 17 looping OST tracks)
+   * for the UI Boombox selector.
+   */
+  public getAvailableBoomboxTracks(): readonly BoomboxTrackDescriptor[] {
+    return BOOMBOX_TRACK_LIST;
   }
 
   public getActiveTrackId(): MusicTrackId | null {
@@ -317,6 +368,14 @@ export class AudioEngine implements IAudioEngine {
 
   public getMusicState(): MusicState {
     return this.musicState;
+  }
+
+  public getMusicContext(): MusicContextSnapshot {
+    return {
+      mapId: this.currentMapId,
+      tier: this.currentMapTier,
+      state: this.musicState,
+    };
   }
 
   // ==========================================================================
@@ -416,7 +475,14 @@ export class AudioEngine implements IAudioEngine {
   }
 
   private applyMixGains(smooth: boolean): void {
-    if (!this.ctx || !this.masterGain || !this.muteGain || !this.sfxGain || !this.musicGain || !this.musicDuckGain) {
+    if (
+      !this.ctx ||
+      !this.masterGain ||
+      !this.muteGain ||
+      !this.sfxGain ||
+      !this.musicGain ||
+      !this.musicDuckGain
+    ) {
       return;
     }
     const now = this.ctx.currentTime;
@@ -442,6 +508,25 @@ export class AudioEngine implements IAudioEngine {
     }
   }
 
+  private syncAmbientDesertWind(): void {
+    if (this.desertWindManualOverride !== null) {
+      this.desertWindIntensity = this.desertWindManualOverride;
+    } else if (
+      this.currentMapId === 'Desert' &&
+      (this.musicState === 'explore' ||
+        this.musicState === 'boss' ||
+        this.musicState === 'final_swarm')
+    ) {
+      this.desertWindIntensity = Math.min(1, 0.34 + (this.currentMapTier - 1) * 0.14);
+    } else {
+      this.desertWindIntensity = 0;
+    }
+
+    if (!this.disposed && this.synth && this.ctx && this.ctx.state === 'running') {
+      this.synth.setDesertWind(this.desertWindIntensity);
+    }
+  }
+
   // ==========================================================================
   // INTERNAL EVENT SIDE-EFFECTS & DUAL-MODE PLAYBACK
   // ==========================================================================
@@ -460,6 +545,9 @@ export class AudioEngine implements IAudioEngine {
       case 'player_rail_detach':
         this.setContinuousMovement(this.moveSpeed, this.moveSliding, false);
         break;
+      case 'portal_activated':
+        this.setMusicContext(event.targetMapId, event.targetTier, 'explore');
+        break;
       case 'boss_spawn':
         this.setMusicState('boss');
         break;
@@ -477,15 +565,29 @@ export class AudioEngine implements IAudioEngine {
         if (to === 'paused') {
           this.setMusicDuck(0.45);
           this.synth?.stopContinuousLoops();
-        } else if (to === 'level_up' || to === 'chest_open' || to === 'merchant' || to === 'microwave') {
+        } else if (
+          to === 'level_up' ||
+          to === 'chest_open' ||
+          to === 'merchant' ||
+          to === 'microwave'
+        ) {
           this.setMusicDuck(0.65);
           this.synth?.stopContinuousLoops();
         } else if (to === 'playing') {
           this.setMusicDuck(1.0);
           if (this.musicState === 'title' || this.musicState === 'silent') {
             this.setMusicState('explore');
+          } else {
+            this.syncAmbientDesertWind();
           }
-        } else if (to === 'title' || to === 'character_select' || to === 'map_select' || to === 'shop' || to === 'quests' || to === 'settings') {
+        } else if (
+          to === 'title' ||
+          to === 'character_select' ||
+          to === 'map_select' ||
+          to === 'shop' ||
+          to === 'quests' ||
+          to === 'settings'
+        ) {
           this.setMusicDuck(1.0);
           this.synth?.stopContinuousLoops();
           this.setMusicState('title');
@@ -517,7 +619,11 @@ export class AudioEngine implements IAudioEngine {
     if (!this.ctx || !this.sfxGain || !this.synth || this.ctx.state !== 'running') {
       return;
     }
-    if (this.settings.audioMuted || this.settings.audioMaster <= 0.001 || this.settings.audioSfx <= 0.001) {
+    if (
+      this.settings.audioMuted ||
+      this.settings.audioMaster <= 0.001 ||
+      this.settings.audioSfx <= 0.001
+    ) {
       return;
     }
 
@@ -526,7 +632,9 @@ export class AudioEngine implements IAudioEngine {
     const finalGain = def.gain * acquired.densityGainScale * intensity;
 
     // Dual-mode: attempt Custom Pack clip first, falling back instantly to ProceduralSynth
-    const customUrl = this.findCustomPackClipUrl(getCustomPackClipCandidates(req.cueId, req.weaponId));
+    const customUrl = this.findCustomPackClipUrl(
+      getCustomPackClipCandidates(req.cueId, req.weaponId),
+    );
     if (customUrl) {
       const cached = this.decodedCache.get(customUrl);
       if (cached) {
@@ -537,7 +645,6 @@ export class AudioEngine implements IAudioEngine {
         this.playCustomBufferOneShot(cached, finalGain, rate);
         return;
       }
-      // Kick off non-blocking decode for future triggers; fall through to synth immediately!
       if (!this.decodedCache.has(customUrl)) {
         void this.loadCustomAudioBuffer(customUrl);
       }
@@ -555,12 +662,20 @@ export class AudioEngine implements IAudioEngine {
   private resolveDesiredTrackId(): MusicTrackId | null {
     if (this.musicState === 'silent') return null;
     if (this.musicState === 'victory' || this.musicState === 'game_over') {
-      return MUSIC_STATE_TO_TRACK[this.musicState];
+      return resolveMusicTrackForContext(
+        this.currentMapId,
+        this.currentMapTier,
+        this.musicState,
+      );
     }
-    if (this.boomboxTrack !== 'auto' && isMusicTrackId(this.boomboxTrack)) {
+    if (this.boomboxTrack !== 'auto') {
       return this.boomboxTrack;
     }
-    return MUSIC_STATE_TO_TRACK[this.musicState];
+    return resolveMusicTrackForContext(
+      this.currentMapId,
+      this.currentMapTier,
+      this.musicState,
+    );
   }
 
   private syncActiveMusicTrack(forceRestart: boolean): void {
@@ -763,7 +878,10 @@ export class AudioEngine implements IAudioEngine {
         options?: { capture?: boolean },
       ) => void;
     };
-    if (typeof target.addEventListener !== 'function' || typeof target.removeEventListener !== 'function') {
+    if (
+      typeof target.addEventListener !== 'function' ||
+      typeof target.removeEventListener !== 'function'
+    ) {
       return;
     }
 
