@@ -1499,8 +1499,8 @@ export function createDefaultSaveData(): SaveData {
 }
 
 /**
- * Custom Asset Pack manifest produced by `tools/extract-assets.ts`
- * and consumed by `IAssetPack` in dev (`/__custom_pack__/manifest.json`) or user upload.
+ * Custom Asset Pack manifest consumed by `IAssetPack`
+ * in dev (`/__custom_pack__/manifest.json`) or via user upload.
  */
 export interface PackTextureEntry {
   id: string;

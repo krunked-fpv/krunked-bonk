@@ -8,8 +8,10 @@ export-dna.ts
 scripts/verify/playtest-100.ts
 scripts/verify/verify-all.ts
 
-# Local user-supplied asset pack & extractor outputs (NEVER commit)
+# Local user-supplied asset pack & extractor tools (NEVER commit)
 .krunkedbonk-assets/
+tools/extract-assets.ts
+tools/oracle-dump.ts
 
 # Build, dependencies, tooling & backups
 node_modules/

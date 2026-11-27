@@ -4,8 +4,6 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "extract": "tsx tools/extract-assets.ts",
-    "oracle": "tsx tools/oracle-dump.ts",
     "dev": "vite",
     "play": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "typecheck": "tsc --noEmit",
@@ -13,8 +11,7 @@
     "verify:assets": "tsx scripts/verify/verify-assets.ts",
     "verify:sim": "tsx scripts/verify/verify-sim.ts",
     "verify": "npm run test && npm run verify:assets && npm run verify:sim",
-    "build": "vite build",
-    "export:dna": "tsx export-dna.ts"
+    "build": "vite build"
   },
   "dependencies": {
     "three": "^0.170.0"

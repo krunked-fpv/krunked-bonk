@@ -14,5 +14,5 @@
     "useDefineForClassFields": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "tools", "scripts", "tests"]
+  "include": ["src", "scripts", "tests"]
 }

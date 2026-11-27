@@ -70,8 +70,6 @@ npm run verify:assets # Validate procedural assets & pack contracts
 npm run verify:sim   # Run headless deterministic simulation checks
 npm run verify       # Run test + verify:assets + verify:sim
 npm run build        # Build static production bundle into dist/
-npm run extract      # Optional local custom pack builder (local dev only)
-npm run oracle       # Optional local data schema checker (local dev only)
 ```
 
 ## Static Deployment
