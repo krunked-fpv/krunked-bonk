@@ -222,6 +222,7 @@ uniform float uHitFlash;
 uniform float uOpacity;
 uniform float uGloss;
 uniform float uFlatShading;
+uniform float uWindStrength;
 
 varying vec3 vWorldNormal;
 varying vec3 vWorldPos;
@@ -235,7 +236,8 @@ void main() {
     if (!gl_FrontFacing) N = -N;
   } else {
     N = normalize(vWorldNormal);
-    if (!gl_FrontFacing) N = -N;
+    // Keep upward-biased vertex normals on both sides of wind-swayed foliage/grass
+    if (!gl_FrontFacing && uWindStrength < 0.0001) N = -N;
   }
 
   vec3 V = normalize(cameraPosition - vWorldPos);

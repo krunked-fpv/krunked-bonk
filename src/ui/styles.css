@@ -383,10 +383,10 @@
   pointer-events: none;
 }
 
-/* Top-Right Counters & FPS */
+/* Top-Right Counters & FPS — positioned strictly BELOW the 180x180 desktop minimap */
 .kb-hud-top-right {
   position: fixed;
-  top: 22px;
+  top: 204px;
   right: 14px;
   display: flex;
   flex-direction: column;
@@ -820,6 +820,10 @@
   padding: 16px;
   background: radial-gradient(circle at 50% 35%, rgba(25, 31, 48, 0.72) 0%, rgba(6, 7, 10, 0.88) 100%);
   pointer-events: auto;
+}
+
+.kb-menus.is-title {
+  background: radial-gradient(circle at 50% 45%, rgba(8, 12, 22, 0.14) 0%, rgba(8, 12, 22, 0.34) 100%);
 }
 
 .kb-menus.is-visible {
@@ -1521,10 +1525,23 @@
 
 .kb-touch-top-pills {
   position: fixed;
-  top: max(68px, calc(env(safe-area-inset-top) + 56px));
+  top: 248px;
   right: max(14px, env(safe-area-inset-right));
   gap: 8px;
   z-index: 38;
+}
+
+/* Shift bottom-right speedometer & item strip clear of touch buttons on desktop/Tesla */
+body.kb-touch-active .kb-hud-kinetic {
+  left: 50%;
+  right: auto;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  align-items: center;
+}
+
+body.kb-touch-active .kb-hud-items {
+  bottom: max(92px, calc(env(safe-area-inset-bottom) + 78px));
 }
 
 .kb-touch-pill {
@@ -1659,17 +1676,51 @@
     min-height: 128px;
   }
 
+  .kb-hud-level-badge {
+    top: 20px;
+    left: 8px;
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+
   .kb-hud-top-center {
-    width: 52vw;
+    top: 20px;
+    left: 74px;
+    right: 152px;
+    width: auto;
+    transform: none;
+    align-items: center;
   }
 
   .kb-hud-timer {
-    font-size: 16px;
-    padding: 4px 10px;
+    font-size: 13px;
+    padding: 4px 8px;
+    gap: 5px;
+    white-space: nowrap;
+  }
+
+  .kb-hud-timer-tag {
+    font-size: 9px;
+    padding: 2px 4px;
+  }
+
+  .kb-hud-top-right {
+    top: 160px;
+    right: 10px;
+  }
+
+  .kb-counter-pill {
+    padding: 3px 6px;
+    gap: 4px;
+    font-size: 10px;
+  }
+
+  .kb-counter-label {
+    font-size: 9px;
   }
 
   .kb-hud-loadout {
-    top: 58px;
+    top: 54px;
     left: 8px;
   }
 
@@ -1684,6 +1735,10 @@
     bottom: max(8px, env(safe-area-inset-bottom));
   }
 
+  body.kb-touch-active .kb-hud-bottom-left {
+    width: 47vw;
+  }
+
   .kb-hud-items {
     display: none;
   }
@@ -1691,6 +1746,25 @@
   .kb-hud-kinetic {
     right: 8px;
     bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  body.kb-touch-active .kb-hud-kinetic {
+    left: auto;
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(214px, calc(env(safe-area-inset-bottom) + 198px));
+    transform: none;
+    align-items: flex-end;
+  }
+
+  .kb-touch-top-pills {
+    top: 196px;
+    right: max(10px, env(safe-area-inset-right));
+    gap: 6px;
+  }
+
+  .kb-touch-pill {
+    padding: 6px 10px;
+    font-size: 10px;
   }
 
   .kb-speed-val {
@@ -1716,11 +1790,12 @@
   }
 
   .kb-touch-stick-base {
-    left: 72px;
-    width: 106px;
-    height: 106px;
-    margin-left: -53px;
-    margin-top: -53px;
+    left: 66px;
+    bottom: max(104px, calc(env(safe-area-inset-bottom) + 92px));
+    width: 100px;
+    height: 100px;
+    margin-left: -50px;
+    margin-top: -50px;
   }
 
   .kb-pack-row {

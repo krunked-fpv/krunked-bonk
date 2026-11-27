@@ -229,7 +229,7 @@ export function drawPixelText(
   const len = text.length;
   if (len === 0) return;
 
-  const px = Math.max(1, Math.round(options.pixelSize ?? 3));
+  const px = Math.max(1, Math.round((options.pixelSize ?? 3) * 2) / 2);
   const spacing = options.letterSpacing ?? 1;
   const outlineBlocks = options.outlinePx ?? 1;
   const shadowBlocks = options.shadowOffsetPx ?? 1;

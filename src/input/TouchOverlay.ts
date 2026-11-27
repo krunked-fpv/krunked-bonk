@@ -355,6 +355,9 @@ export class TouchOverlay {
     this.host = null;
     this.touchActive = false;
     this.releaseAllTouches();
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.classList.remove('kb-touch-active', 'kb-touch-gameplay');
+    }
   }
 
   private activateFromRealTouch(): void {
@@ -367,6 +370,12 @@ export class TouchOverlay {
   }
 
   private syncDomVisibility(): void {
+    const activeGameplay = this.touchActive && this.phase === 'playing';
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.classList.toggle('kb-touch-active', this.touchActive);
+      document.body.classList.toggle('kb-touch-gameplay', activeGameplay);
+    }
+
     if (!this.root) return;
     if (!this.touchActive) {
       this.root.classList.remove('is-active', 'is-gameplay');
@@ -377,10 +386,10 @@ export class TouchOverlay {
     }
 
     this.root.classList.add('is-active');
-    this.root.classList.toggle('is-gameplay', this.phase === 'playing');
+    this.root.classList.toggle('is-gameplay', activeGameplay);
     this.root.style.display = 'block';
     this.root.style.pointerEvents = 'none';
-    this.root.setAttribute('aria-hidden', this.phase === 'playing' ? 'false' : 'true');
+    this.root.setAttribute('aria-hidden', activeGameplay ? 'false' : 'true');
   }
 
   private syncInteractButton(): void {

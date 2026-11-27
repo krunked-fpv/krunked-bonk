@@ -110,8 +110,8 @@ export class MinimapRenderer {
     if (this.fullMapOpen) {
       return Math.max(260, Math.min(540, Math.floor(Math.min(this.viewportW, this.viewportH) * 0.74)));
     }
-    // Scale slightly smaller on narrow mobile viewports
-    return this.viewportW < 520 ? 136 : MINIMAP_SIZE_PX;
+    // Match responsive CSS <= 768px breakpoint cleanly
+    return this.viewportW <= 768 ? 136 : MINIMAP_SIZE_PX;
   }
 
   private applyCanvasLayout(): void {
@@ -127,8 +127,8 @@ export class MinimapRenderer {
       this.canvas.style.left = '50%';
       this.canvas.style.transform = 'translate(-50%, -50%)';
     } else {
-      this.canvas.style.top = '14px';
-      this.canvas.style.right = '14px';
+      this.canvas.style.top = '18px';
+      this.canvas.style.right = this.viewportW <= 768 ? '10px' : '14px';
       this.canvas.style.left = 'auto';
       this.canvas.style.transform = 'none';
     }

@@ -47,12 +47,13 @@ function createLocalRng(seed: number): () => number {
 }
 
 /**
- * Creates a stylized 3-blade crossed low-poly grass tuft BufferGeometry with
- * vertex colors (deep emerald root -> sunlit chartreuse tip) and uv.y = height [0..1]
+ * Creates a lush 4-blade crossed low-poly grass tuft BufferGeometry with
+ * upward-biased vertex normals (0, 1, 0) so both sides catch warm sunlight cleanly,
+ * vertex colors (emerald root -> sunlit chartreuse tip), and uv.y = height [0..1]
  * so the GPU wind shader bends only the tips smoothly.
  */
 function createGrassTuftGeometry(): THREE.BufferGeometry {
-  const bladeCount = 3;
+  const bladeCount = 4;
   const vertsPerBlade = 3; // single crisp stylized tapered triangle per blade
   const totalVerts = bladeCount * vertsPerBlade;
 
@@ -61,20 +62,20 @@ function createGrassTuftGeometry(): THREE.BufferGeometry {
   const uvs = new Float32Array(totalVerts * 2);
   const colors = new Float32Array(totalVerts * 3);
 
-  const rootCol = new THREE.Color(0x2a7d3e);
-  const tipCol = new THREE.Color(0xc4f55b);
+  const rootCol = new THREE.Color(0x369648);
+  const tipCol = new THREE.Color(0xd2ff66);
 
   let vi = 0;
   for (let b = 0; b < bladeCount; b++) {
-    const angle = (b / bladeCount) * Math.PI + (b === 1 ? 0.2 : 0);
+    const angle = (b / bladeCount) * Math.PI + (b % 2 === 1 ? 0.18 : 0);
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    const halfW = 0.22;
-    const h = 0.72 + (b % 2) * 0.18;
-    const lean = 0.14;
+    const halfW = 0.2;
+    const h = 0.68 + (b % 2) * 0.22 + (b === 3 ? 0.08 : 0);
+    const lean = 0.16;
 
-    const bx = cos * 0.08;
-    const bz = sin * 0.08;
+    const bx = cos * 0.1;
+    const bz = sin * 0.1;
 
     // Left root
     positions[vi * 3] = bx - cos * halfW;

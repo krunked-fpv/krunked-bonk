@@ -47,10 +47,102 @@ function formatCompact(n: number): string {
   return String(v);
 }
 
-function abbreviate(name: string, maxLen = 6): string {
-  const clean = name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
-  if (clean.length <= maxLen) return clean.toUpperCase();
-  const words = clean.split(/\s+/);
+const SHORT_TAG_MAP: Record<string, string> = {
+  // Weapons
+  WeaponFireStaff: 'FIRE',
+  WeaponBone: 'BONE',
+  WeaponSword: 'SWRD',
+  WeaponAura: 'AURA',
+  WeaponRevolver: 'REVO',
+  WeaponChunkers: 'ROCK',
+  WeaponLightningBolt: 'BOLT',
+  WeaponSniper: 'SNIP',
+  WeaponBow: 'BOW',
+  WeaponKatana: 'KTNA',
+  WeaponAxe: 'AXE',
+  WeaponScythe: 'SCYT',
+  WeaponPoisonFlask: 'POIS',
+  WeaponAegis: 'AEGS',
+  WeaponTornado: 'TORN',
+  WeaponBlackHole: 'VOID',
+  WeaponFrostwalker: 'FRST',
+  WeaponDexecutioner: 'EXEC',
+  WeaponDice: 'DICE',
+  WeaponBananarang: 'BANA',
+  WeaponBloodMagic: 'BLOD',
+  WeaponCorruptedSword: 'CURS',
+  WeaponWirelessDagger: 'DAGR',
+  WeaponFlamewalker: 'FLAM',
+  WeaponDragonsBreath: 'DRGN',
+  WeaponSpaceNoodle: 'NOOD',
+  WeaponHeroSword: 'HERO',
+  WeaponMines: 'MINE',
+  WeaponRocket: 'RCKT',
+  WeaponShotgun: 'SHOT',
+  // Tomes
+  TomeDamage: 'DMG',
+  TomeCooldown: 'CD',
+  TomeAttackSpeed: 'SPD',
+  TomeHealth: 'HP',
+  TomeAgility: 'AGI',
+  TomePrecision: 'CRIT',
+  TomeXP: 'XP',
+  TomeQuantity: 'QTY',
+  TomeSize: 'SIZE',
+  TomeArmor: 'ARM',
+  TomeLuck: 'LUCK',
+  TomeShield: 'SHLD',
+  TomeEvasion: 'EVAD',
+  TomeRegen: 'REGN',
+  TomeLifesteal: 'LIFE',
+  TomeGold: 'GOLD',
+  TomeSilver: 'SLVR',
+  TomePickupRange: 'MAG',
+  TomeCurse: 'CURS',
+  TomeKnockback: 'KB',
+  TomeDuration: 'DUR',
+  TomeBounce: 'BNC',
+  TomeCritDamage: 'CDMG',
+  // Items
+  GiantFork: 'FORK',
+  Bonker: 'BONK',
+  OverpoweredLamp: 'LAMP',
+  Wrench: 'WRNC',
+  Beacon: 'BECN',
+  Cheese: 'CHSE',
+  SpicyMeatball: 'MEAT',
+  LightningOrb: 'ZAP',
+  IceCube: 'ICE',
+  GymSauce: 'GYM',
+  TurboSocks: 'SOCK',
+  MoldyGloves: 'GLOV',
+  CursedDoll: 'DOLL',
+  JoeDagger: 'JOE',
+  GoldenGlove: 'GOLD',
+  Anvil: 'ANVL',
+  Mirror: 'MIRR',
+  PhoenixFeather: 'PHNX',
+  Borgar: 'BRGR',
+  Battery: 'BATT',
+  Key: 'KEY',
+  Medkit: 'MED',
+  Clover: 'CLVR',
+  CreditCard: 'CARD',
+  SoulHarvester: 'SOUL',
+  ZaWarudo: 'TIME',
+};
+
+function shortTag(id: string, displayName: string | undefined, maxLen = 4): string {
+  const mapped = SHORT_TAG_MAP[id];
+  if (mapped) return mapped;
+  const source = (displayName ?? id)
+    .replace(/^Tome of\s+/i, '')
+    .replace(/^Weapon/i, '')
+    .replace(/^Tome/i, '')
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .trim();
+  if (source.length <= maxLen) return source.toUpperCase();
+  const words = source.split(/\s+/);
   if (words.length >= 2) {
     return words
       .map((w) => w.slice(0, Math.max(2, Math.floor(maxLen / words.length))))
@@ -58,7 +150,7 @@ function abbreviate(name: string, maxLen = 6): string {
       .slice(0, maxLen)
       .toUpperCase();
   }
-  return clean.slice(0, maxLen).toUpperCase();
+  return source.slice(0, maxLen).toUpperCase();
 }
 
 function interactGlyphForDevice(device: InputDeviceKind, profile: GamepadProfile): string {
@@ -584,7 +676,7 @@ export class HudOverlay {
 
         const name = document.createElement('div');
         name.className = 'kb-slot-name';
-        name.textContent = abbreviate(def?.displayName ?? slot.weaponId, 7);
+        name.textContent = shortTag(slot.weaponId, def?.displayName, 4);
         box.title = `${def?.displayName ?? slot.weaponId} (Lv ${slot.level})`;
 
         const meta = document.createElement('div');
@@ -663,7 +755,7 @@ export class HudOverlay {
 
       const name = document.createElement('div');
       name.className = 'kb-slot-name';
-      name.textContent = abbreviate(def?.displayName ?? slot.tomeId, 7);
+      name.textContent = shortTag(slot.tomeId, def?.displayName, 4);
       box.title = `${def?.displayName ?? slot.tomeId} (Lv ${slot.level})`;
 
       const meta = document.createElement('div');
@@ -697,7 +789,7 @@ export class HudOverlay {
       const chip = document.createElement('div');
       chip.className = 'kb-item-chip';
       chip.setAttribute('data-rarity', def?.rarity ?? 'Common');
-      chip.textContent = abbreviate(def?.displayName ?? stack.itemId, 4);
+      chip.textContent = shortTag(stack.itemId, def?.displayName, 4);
       chip.title = def
         ? `${def.displayName} (${def.rarity}) x${stack.stacks}\n${def.description}`
         : `${stack.itemId} x${stack.stacks}`;

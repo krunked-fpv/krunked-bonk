@@ -72,6 +72,57 @@ function formatClock(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }
 
+const PERCENT_STAT_LABELS: Record<string, string> = {
+  Evasion: 'Evasion',
+  MoveSpeed: 'Move Speed',
+  Luck: 'Luck',
+  Armor: 'Armor',
+  CritChance: 'Crit Chance',
+  CritDamage: 'Crit Damage',
+  DamageMultiplier: 'Damage',
+  AttackSpeed: 'Attack Speed',
+  CooldownReduction: 'Cooldown',
+  Lifesteal: 'Lifesteal',
+  DamageReduction: 'Dmg Resist',
+  AreaSize: 'Area Size',
+  ProjectileSpeed: 'Proj Speed',
+  Duration: 'Duration',
+  XpMultiplier: 'XP Gain',
+  GoldMultiplier: 'Gold Gain',
+  SilverMultiplier: 'Silver Gain',
+  StatusChance: 'Status Chance',
+  Difficulty: 'Difficulty',
+};
+
+const FLAT_STAT_META: Record<string, { label: string; unit?: string }> = {
+  MaxHealth: { label: 'Max HP' },
+  HealthRegen: { label: 'HP/s' },
+  Shield: { label: 'Shield' },
+  JumpHeight: { label: 'Jump' },
+  ExtraJumps: { label: 'Extra Jump' },
+  PickupRange: { label: 'Pickup', unit: 'm' },
+  ProjectileCount: { label: 'Proj' },
+  ProjectileBounces: { label: 'Bounces' },
+  ProjectilePierce: { label: 'Pierce' },
+  Thorns: { label: 'Thorns' },
+  WallClimbLimit: { label: 'Wall Climbs' },
+};
+
+function formatStatChip(key: string, value: number): string {
+  const sign = value >= 0 ? '+' : '';
+  if (key in PERCENT_STAT_LABELS) {
+    const pct = Math.round(value * 100);
+    return `${sign}${pct}% ${PERCENT_STAT_LABELS[key]}`;
+  }
+  const flat = FLAT_STAT_META[key];
+  const numStr = Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '');
+  if (flat) {
+    return `${sign}${numStr}${flat.unit ?? ''} ${flat.label}`;
+  }
+  const friendly = key.replace(/([a-z])([A-Z])/g, '$1 $2');
+  return `${sign}${numStr} ${friendly}`;
+}
+
 function formatDmg(n: number): string {
   const v = Math.max(0, Math.round(n));
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
@@ -174,6 +225,7 @@ export class MenusOverlay {
     if (!this.root) return false;
     const visible = this.isMenuPhase(view.phase);
     this.root.classList.toggle('is-visible', visible);
+    this.root.classList.toggle('is-title', visible && view.phase === 'title');
     if (!visible) {
       this.banishArmed = false;
       if (this.lastSignature !== '') {
@@ -403,9 +455,10 @@ export class MenusOverlay {
       const statRow = document.createElement('div');
       statRow.className = 'kb-chip-row';
       for (const [k, v] of Object.entries(selectedCharDef.baseStats).slice(0, 6)) {
+        if (typeof v !== 'number' || !Number.isFinite(v) || v === 0) continue;
         const chip = document.createElement('span');
         chip.className = 'kb-stat-chip';
-        chip.textContent = `${k}: ${v}`;
+        chip.textContent = formatStatChip(k, v);
         statRow.appendChild(chip);
       }
 

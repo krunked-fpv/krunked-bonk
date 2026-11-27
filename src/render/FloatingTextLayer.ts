@@ -57,8 +57,10 @@ export class FloatingTextLayer {
   private wasClearedWhenDisabled = true;
   private jitterSeed = 0x1a2b3c4d;
 
-  // Pre-allocated scratch Vector3 for 3D->2D projection
+  // Pre-allocated scratch Vector3 & screen-space de-overlap buffers (ZERO per-frame allocs)
   private readonly _proj = new THREE.Vector3();
+  private readonly placedX = new Float32Array(MAX_FLOATING_TEXTS);
+  private readonly placedY = new Float32Array(MAX_FLOATING_TEXTS);
 
   constructor() {
     for (let i = 0; i < MAX_FLOATING_TEXTS; i++) {
@@ -167,10 +169,10 @@ export class FloatingTextLayer {
 
     slot.active = true;
     slot.text = text;
-    slot.wx = x + this.nextJitter() * 0.55;
-    slot.wy = y;
-    slot.wz = z + this.nextJitter() * 0.55;
-    slot.vx = this.nextJitter() * 1.1;
+    slot.wx = x + this.nextJitter() * 1.15;
+    slot.wy = y + this.nextJitter() * 0.35;
+    slot.wz = z + this.nextJitter() * 1.15;
+    slot.vx = this.nextJitter() * 1.75;
     slot.vy = vy;
     slot.age = 0;
     slot.maxAge = maxAge;
@@ -195,40 +197,40 @@ export class FloatingTextLayer {
               ev.pos.x,
               ev.pos.y + 2.2,
               ev.pos.z,
-              6,
+              3.5,
               '#ff4de8',
               '#ffd84d',
-              1.3,
-              2.9,
-              5.5,
+              1.15,
+              2.6,
+              3.5,
               4,
             );
           } else if (ev.isMegacrit) {
             this.spawn(
-              `MEGACRIT! ${dmg}`,
+              `MEGA! ${dmg}`,
               ev.pos.x,
               ev.pos.y + 1.9,
               ev.pos.z,
-              5,
+              3.0,
               '#ffde59',
               '#ff4d2e',
-              1.05,
-              2.5,
-              3.0,
+              0.95,
+              2.4,
+              2.0,
               3,
             );
           } else if (ev.isExecute) {
             this.spawn(
-              `EXECUTE! ${dmg}`,
+              `EXEC! ${dmg}`,
               ev.pos.x,
               ev.pos.y + 1.8,
               ev.pos.z,
-              4,
+              2.75,
               '#ff8fa3',
               '#ff1e42',
-              0.95,
-              2.4,
-              2.0,
+              0.9,
+              2.3,
+              1.5,
               3,
             );
           } else if (ev.critTier >= 1) {
@@ -237,12 +239,12 @@ export class FloatingTextLayer {
               ev.pos.x,
               ev.pos.y + 1.6,
               ev.pos.z,
-              4,
+              2.5,
               '#fff3a1',
               '#ffb703',
-              0.84,
-              2.2,
-              1.0,
+              0.8,
+              2.1,
+              0.8,
               2,
             );
           } else {
@@ -252,11 +254,11 @@ export class FloatingTextLayer {
               ev.pos.x,
               ev.pos.y + 1.4,
               ev.pos.z,
-              3,
+              2.0,
               cols[0],
               cols[1],
-              0.66,
-              1.9,
+              0.64,
+              1.85,
               0,
               1,
             );
@@ -270,12 +272,12 @@ export class FloatingTextLayer {
             ev.pos.x,
             ev.pos.y + 3.4,
             ev.pos.z,
-            5,
+            3.5,
             '#ffffff',
             '#38f2ff',
-            1.45,
-            2.2,
-            2.0,
+            1.35,
+            2.1,
+            1.5,
             4,
           );
           break;
@@ -288,11 +290,11 @@ export class FloatingTextLayer {
               ev.pos.x,
               ev.pos.y + 2.4,
               ev.pos.z,
-              3,
+              2.25,
               '#c9ff9e',
               '#34eb64',
-              0.82,
-              2.0,
+              0.78,
+              1.95,
               0,
               2,
             );
@@ -306,11 +308,11 @@ export class FloatingTextLayer {
             ev.pos.x,
             ev.pos.y + 2.5,
             ev.pos.z,
-            3,
+            2.25,
             '#ffffff',
             '#62e8ff',
-            0.78,
-            2.1,
+            0.75,
+            2.0,
             0,
             2,
           );
@@ -323,11 +325,11 @@ export class FloatingTextLayer {
               ev.pos.x,
               ev.pos.y + 2.3,
               ev.pos.z,
-              3,
+              2.25,
               '#fff4a3',
               '#ffae19',
-              0.72,
-              2.1,
+              0.7,
+              2.0,
               0,
               2,
             );
@@ -360,6 +362,7 @@ export class FloatingTextLayer {
 
     const halfW = this.width * 0.5;
     const halfH = this.height * 0.5;
+    let placedCount = 0;
 
     for (let i = 0; i < MAX_FLOATING_TEXTS; i++) {
       const e = this.pool[i]!;
@@ -380,18 +383,37 @@ export class FloatingTextLayer {
       if (this._proj.z > 1.0 || this._proj.z < -1.0) continue;
 
       let sx = (this._proj.x + 1) * halfW;
-      const sy = (1 - this._proj.y) * halfH;
+      let sy = (1 - this._proj.y) * halfH;
       if (sx < -120 || sx > this.width + 120 || sy < -60 || sy > this.height + 60) continue;
 
+      // Lightweight screen-space de-overlap (stagger vertically so rapid crits never stack)
+      for (let nudge = 0; nudge < 6; nudge++) {
+        let collided = false;
+        for (let k = 0; k < placedCount; k++) {
+          if (Math.abs(sx - this.placedX[k]!) < 52 && Math.abs(sy - this.placedY[k]!) < 20) {
+            sy -= 20;
+            collided = true;
+            break;
+          }
+        }
+        if (!collided) break;
+      }
+
+      if (placedCount < MAX_FLOATING_TEXTS) {
+        this.placedX[placedCount] = sx;
+        this.placedY[placedCount] = sy;
+        placedCount++;
+      }
+
       const t = e.age / e.maxAge;
-      // Bouncy arcade pop-in overshoot -> crisp readable plateau -> clean fade
+      // Subtle arcade pop-in overshoot -> crisp readable plateau -> clean fade
       let scaleBoost = 1.0;
       if (t < 0.14) {
         const p = t / 0.14;
-        scaleBoost = 0.65 + Math.sin(p * Math.PI * 0.65) * 0.55;
+        scaleBoost = 0.78 + Math.sin(p * Math.PI * 0.65) * 0.34;
       } else if (t < 0.28) {
         const p = (t - 0.14) / 0.14;
-        scaleBoost = 1.15 - p * 0.15;
+        scaleBoost = 1.08 - p * 0.08;
       }
 
       if (e.shakeAmp > 0 && t < 0.35) {
@@ -399,7 +421,7 @@ export class FloatingTextLayer {
       }
 
       const alpha = t > 0.72 ? Math.max(0, 1 - (t - 0.72) / 0.28) : 1.0;
-      const px = Math.max(2, Math.round(e.pixelSize * scaleBoost));
+      const px = Math.max(1.5, Math.round(e.pixelSize * scaleBoost * 2) / 2);
 
       ctx.globalAlpha = alpha;
       drawPixelText(ctx, e.text, sx, sy, {
