@@ -1,9 +1,12 @@
 /**
- * KRUNKEDBONK — Crisp Retro-Framed 2D Minimap (110m) & Toggleable Full Map (400m)
+ * KRUNKEDBONK — Circular N/E/S/W Compass Radar Minimap (110m) & Toggleable Full Map (400m)
  *
- * Pre-bakes a pixelated elevation-contour map from ITerrainSampler on map load, then renders
- * player directional arrow + FOV cone, shrines, chests, boss spawner/portal, pylons, spline rails,
- * jump pads, and nearby enemies/bosses with sleek mobile-responsive sizing (Portrait & Landscape!).
+ * Renders an authentic retro-arcade circular compass radar in the top-right corner:
+ * - Circular clipped dark-navy radar with metallic iron/stone bezel
+ * - Rotating N / E / S / W compass letters hugging the circular rim live with camera heading
+ * - Subtle relief terrain backdrop, crisp cobalt-blue center player arrow, green/gold
+ *   diamond objective pins (shrines, chests, boss spawner, portals, pylons, lamps)
+ * - Tap or press [M] to toggle the full 400m north-up arena map!
  */
 
 import {
@@ -15,10 +18,10 @@ import {
 } from '../contracts/index';
 import { drawPixelIcon, drawPixelText } from '../assets/PixelBitmapFont';
 
-const TERRAIN_BAKE_RES = 128;
-const MINIMAP_SIZE_DESKTOP = 164;
-const MINIMAP_SIZE_MOBILE_PORTRAIT = 98;
-const MINIMAP_SIZE_MOBILE_LANDSCAPE = 90;
+const TERRAIN_BAKE_RES = 144;
+const MINIMAP_SIZE_DESKTOP = 158;
+const MINIMAP_SIZE_MOBILE_PORTRAIT = 96;
+const MINIMAP_SIZE_MOBILE_LANDSCAPE = 88;
 
 function formatMapTitle(mapId: MapId): string {
   switch (mapId) {
@@ -58,7 +61,6 @@ export class MinimapRenderer {
   };
 
   private readonly handleCanvasTap = (e: PointerEvent): void => {
-    // Allow tapping the minimap directly on touch devices (or clicking when full map is open) to toggle
     if (e.pointerType === 'touch' || this.fullMapOpen) {
       e.stopPropagation();
       this.fullMapOpen = !this.fullMapOpen;
@@ -71,10 +73,8 @@ export class MinimapRenderer {
       const c = document.createElement('canvas');
       c.style.position = 'absolute';
       c.style.pointerEvents = 'auto';
-      c.style.zIndex = '5';
-      c.style.imageRendering = 'pixelated';
-      c.style.borderRadius = '6px';
-      c.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.55)';
+      c.style.zIndex = '15';
+      c.style.imageRendering = 'auto';
       c.setAttribute('data-kb-minimap', 'true');
       this.canvas = c;
       this.ctx = c.getContext('2d');
@@ -170,14 +170,18 @@ export class MinimapRenderer {
       this.canvas.style.right = 'auto';
       this.canvas.style.left = '50%';
       this.canvas.style.transform = 'translate(-50%, -50%)';
+      this.canvas.style.borderRadius = '4px';
+      this.canvas.style.boxShadow = '0 14px 36px rgba(0, 0, 0, 0.85)';
       this.canvas.style.zIndex = '45';
     } else {
       const compact = this.isMobileLandscape() || this.isMobilePortrait();
-      this.canvas.style.top = compact ? '16px' : '22px';
+      // On desktop, leave crisp 34px headroom above circular compass for the bold "LVL 1" stamp!
+      this.canvas.style.top = compact ? '14px' : '38px';
       this.canvas.style.right = compact ? '8px' : '14px';
       this.canvas.style.left = 'auto';
       this.canvas.style.transform = 'none';
-      // Stay above WebGL/2D gameplay canvas (0..4) and below .kb-ui-root (20) so modals blur & cover cleanly
+      this.canvas.style.borderRadius = '50%';
+      this.canvas.style.boxShadow = 'none';
       this.canvas.style.zIndex = '15';
     }
 
@@ -185,9 +189,6 @@ export class MinimapRenderer {
     this.canvas.height = Math.floor(size * this.dpr);
   }
 
-  /**
-   * Pre-bakes crisp pixelated terrain contour tints into an offscreen 128x128 buffer once per map.
-   */
   public bakeTerrain(mapId: MapId, terrain: ITerrainSampler): void {
     this.currentMapId = mapId;
     this.terrainWorldSpan = Math.max(320, terrain.arenaRadius * 2 + 24);
@@ -199,63 +200,101 @@ export class MinimapRenderer {
     const img = tctx.createImageData(TERRAIN_BAKE_RES, TERRAIN_BAKE_RES);
     const data = img.data;
     const halfSpan = this.terrainWorldSpan * 0.5;
+    const heights = new Float32Array(TERRAIN_BAKE_RES * TERRAIN_BAKE_RES);
+    const inBoundsArr = new Uint8Array(TERRAIN_BAKE_RES * TERRAIN_BAKE_RES);
+    const slopeArr = new Float32Array(TERRAIN_BAKE_RES * TERRAIN_BAKE_RES);
 
     for (let py = 0; py < TERRAIN_BAKE_RES; py++) {
       const wz = -halfSpan + ((py + 0.5) / TERRAIN_BAKE_RES) * this.terrainWorldSpan;
       for (let px = 0; px < TERRAIN_BAKE_RES; px++) {
         const wx = -halfSpan + ((px + 0.5) / TERRAIN_BAKE_RES) * this.terrainWorldSpan;
         const s = terrain.sample(wx, wz);
-        const idx = (py * TERRAIN_BAKE_RES + px) * 4;
+        const i = py * TERRAIN_BAKE_RES + px;
+        heights[i] = s.height;
+        inBoundsArr[i] = s.inBounds && s.surfaceTag !== 'void' ? 1 : 0;
+        slopeArr[i] = s.slopeAngleRad;
+      }
+    }
 
-        let r = 14;
-        let g = 22;
-        let b = 34;
+    for (let py = 0; py < TERRAIN_BAKE_RES; py++) {
+      for (let px = 0; px < TERRAIN_BAKE_RES; px++) {
+        const i = py * TERRAIN_BAKE_RES + px;
+        const idx = i * 4;
 
-        if (!s.inBounds || s.surfaceTag === 'void') {
-          r = 11;
-          g = 17;
-          b = 27;
-        } else {
-          const tier = Math.max(0, Math.min(4, Math.floor((s.height + 1.5) / 4.5)));
-          const isCliff = s.slopeAngleRad > 0.5;
+        let r = 8;
+        let g = 14;
+        let b = 26;
+
+        if (inBoundsArr[i]) {
+          const h = heights[i]!;
+          const tier = Math.max(0, Math.min(4, Math.floor((h + 1.5) / 4.2)));
+          const isCliff = slopeArr[i]! > 0.48;
+
+          const hL = heights[py * TERRAIN_BAKE_RES + Math.max(0, px - 1)]!;
+          const hR = heights[py * TERRAIN_BAKE_RES + Math.min(TERRAIN_BAKE_RES - 1, px + 1)]!;
+          const hU = heights[Math.max(0, py - 1) * TERRAIN_BAKE_RES + px]!;
+          const hD = heights[Math.min(TERRAIN_BAKE_RES - 1, py + 1) * TERRAIN_BAKE_RES + px]!;
+          const shade = Math.max(-0.22, Math.min(0.24, ((hL - hR) + (hU - hD)) * 0.14));
 
           if (mapId === 'Desert') {
-            if (isCliff) {
-              r = 128; g = 74; b = 46;
-            } else {
-              r = 166 + tier * 18; g = 124 + tier * 15; b = 62 + tier * 9;
-            }
+            r = isCliff ? 86 : 112 + tier * 14;
+            g = isCliff ? 64 : 84 + tier * 11;
+            b = isCliff ? 46 : 52 + tier * 7;
           } else if (mapId === 'Graveyard') {
-            if (isCliff) {
-              r = 42; g = 46; b = 68;
-            } else {
-              r = 56 + tier * 10; g = 68 + tier * 10; b = 82 + tier * 12;
-            }
+            r = isCliff ? 36 : 44 + tier * 9;
+            g = isCliff ? 38 : 48 + tier * 9;
+            b = isCliff ? 62 : 70 + tier * 11;
           } else if (mapId === 'FinalBossMap') {
-            if (isCliff) {
-              r = 78; g = 34; b = 104;
-            } else {
-              r = 44 + tier * 12; g = 32 + tier * 10; b = 64 + tier * 14;
-            }
+            r = isCliff ? 72 : 96 + tier * 10;
+            g = isCliff ? 36 : 54 + tier * 8;
+            b = isCliff ? 32 : 42 + tier * 6;
           } else {
-            if (isCliff) {
-              r = 52; g = 88; b = 104;
-            } else {
-              r = 46 + tier * 18;
-              g = 112 + tier * 24;
-              b = 64 + tier * 8;
-            }
+            r = isCliff ? 48 : 34 + tier * 10;
+            g = isCliff ? 62 : 66 + tier * 13;
+            b = isCliff ? 68 : 44 + tier * 8;
           }
+          const mult = 1.0 + shade;
+          r *= mult;
+          g *= mult;
+          b *= mult;
         }
 
-        data[idx] = Math.min(255, r);
-        data[idx + 1] = Math.min(255, g);
-        data[idx + 2] = Math.min(255, b);
+        data[idx] = Math.max(0, Math.min(255, Math.round(r)));
+        data[idx + 1] = Math.max(0, Math.min(255, Math.round(g)));
+        data[idx + 2] = Math.max(0, Math.min(255, Math.round(b)));
         data[idx + 3] = 255;
       }
     }
 
     tctx.putImageData(img, 0, 0);
+  }
+
+  private drawDiamondPin(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    r: number,
+    fillHex: string,
+    innerDot?: string,
+  ): void {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r, 0);
+    ctx.lineTo(0, r);
+    ctx.lineTo(-r, 0);
+    ctx.closePath();
+    ctx.fillStyle = fillHex;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#07090e';
+    ctx.stroke();
+    if (innerDot) {
+      ctx.fillStyle = innerDot;
+      ctx.fillRect(-1.2, -1.2, 2.4, 2.4);
+    }
+    ctx.restore();
   }
 
   public render(state: Readonly<SimState>): void {
@@ -279,74 +318,84 @@ export class MinimapRenderer {
 
     const ctx = this.ctx;
     const size = this.getActiveDisplaySize();
-    const isCompact = size <= 106;
+    const isCompact = size <= 104;
     const isTouch =
       typeof document !== 'undefined' && document.body?.classList.contains('kb-touch-active');
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, size, size);
 
-    const pad = isCompact ? 4 : 6;
-    const inner = size - pad * 2;
-    const halfInner = inner * 0.5;
     const cx = size * 0.5;
     const cy = size * 0.5;
 
-    // Sleek dark obsidian-slate beveled frame
-    ctx.fillStyle = '#070a12';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#253147';
-    ctx.fillRect(2, 2, size - 4, size - 4);
-    ctx.fillStyle = '#0b1320';
-    ctx.fillRect(pad, pad, inner, inner);
-
-    const viewWorldSpan = this.fullMapOpen ? FULLMAP_ORTHO_SIZE : MINIMAP_ORTHO_SIZE;
-    const centerX = this.fullMapOpen ? 0 : state.player.pos.x;
-    const centerZ = this.fullMapOpen ? 0 : state.player.pos.z;
-    const scale = inner / viewWorldSpan;
-
-    // Clip to inner map frame
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(pad, pad, inner, inner);
-    ctx.clip();
-
-    // 1. Blit pre-baked terrain contours
-    if (this.terrainCanvas) {
-      const mapLeft = cx + (-this.terrainWorldSpan * 0.5 - centerX) * scale;
-      const mapTop = cy + (-this.terrainWorldSpan * 0.5 - centerZ) * scale;
-      const mapDrawSize = this.terrainWorldSpan * scale;
-      ctx.drawImage(this.terrainCanvas, mapLeft, mapTop, mapDrawSize, mapDrawSize);
+    if (this.fullMapOpen) {
+      this.renderFullSquareMap(ctx, state, size, cx, cy, isTouch);
+      return;
     }
 
-    // Subtle radar crosshair + range circle
-    ctx.strokeStyle = 'rgba(180, 235, 255, 0.14)';
+    // =========================================================================
+    // CIRCULAR ROTATING N/E/S/W COMPASS RADAR MINIMAP!
+    // =========================================================================
+    const rimPad = isCompact ? 7 : 10;
+    const radarR = size * 0.5 - rimPad;
+    const viewWorldSpan = MINIMAP_ORTHO_SIZE;
+    const scale = (radarR * 2) / viewWorldSpan;
+    const centerX = state.player.pos.x;
+    const centerZ = state.player.pos.z;
+    const headingRot = state.player.yaw; // Rotate world so forward is UP!
+
+    // 1. Dark circular radar interior
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radarR, 0, Math.PI * 2);
+    ctx.clip();
+
+    const bgGrad = ctx.createRadialGradient(cx, cy, 4, cx, cy, radarR);
+    bgGrad.addColorStop(0, '#132238');
+    bgGrad.addColorStop(0.75, '#0b1424');
+    bgGrad.addColorStop(1, '#060b14');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, size, size);
+
+    // Subtle rotated terrain relief backdrop
+    if (this.terrainCanvas) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(headingRot);
+      ctx.globalAlpha = 0.36;
+      const mapLeft = (-this.terrainWorldSpan * 0.5 - centerX) * scale;
+      const mapTop = (-this.terrainWorldSpan * 0.5 - centerZ) * scale;
+      const mapDrawSize = this.terrainWorldSpan * scale;
+      ctx.drawImage(this.terrainCanvas, mapLeft, mapTop, mapDrawSize, mapDrawSize);
+      ctx.restore();
+    }
+
+    // Subtle radar inner ring & crosshair ticks
+    ctx.strokeStyle = 'rgba(180, 210, 240, 0.12)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(cx, pad);
-    ctx.lineTo(cx, size - pad);
-    ctx.moveTo(pad, cy);
-    ctx.lineTo(size - pad, cy);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, inner * 0.34, 0, Math.PI * 2);
+    ctx.arc(cx, cy, radarR * 0.52, 0, Math.PI * 2);
     ctx.stroke();
 
-    const toScreenX = (wx: number) => cx + (wx - centerX) * scale;
-    const toScreenY = (wz: number) => cy + (wz - centerZ) * scale;
+    const cosH = Math.cos(headingRot);
+    const sinH = Math.sin(headingRot);
+    const projectRadar = (wx: number, wz: number): [number, number] => {
+      const dx = (wx - centerX) * scale;
+      const dz = (wz - centerZ) * scale;
+      return [cx + dx * cosH - dz * sinH, cy + dx * sinH + dz * cosH];
+    };
 
-    // 2. Spline Rails
+    // Rails
     const rails = state.rails;
     if (rails.length > 0) {
-      ctx.strokeStyle = '#5cf7ff';
-      ctx.lineWidth = this.fullMapOpen ? 2.5 : isCompact ? 1.5 : 2;
+      ctx.strokeStyle = 'rgba(92, 247, 255, 0.72)';
+      ctx.lineWidth = isCompact ? 1.5 : 2;
       for (let i = 0; i < rails.length; i++) {
         const pts = rails[i]!.points;
         if (pts.length < 2) continue;
         ctx.beginPath();
         for (let k = 0; k < pts.length; k++) {
-          const sx = toScreenX(pts[k]!.x);
-          const sy = toScreenY(pts[k]!.z);
+          const [sx, sy] = projectRadar(pts[k]!.x, pts[k]!.z);
           if (k === 0) ctx.moveTo(sx, sy);
           else ctx.lineTo(sx, sy);
         }
@@ -354,177 +403,249 @@ export class MinimapRenderer {
       }
     }
 
-    // 3. Jump Pads
-    const pads = state.jumpPads;
-    ctx.strokeStyle = '#4df5ff';
+    // Jump Pads
+    ctx.strokeStyle = '#38e8ff';
     ctx.lineWidth = 1.5;
-    for (let i = 0; i < pads.length; i++) {
-      const jp = pads[i]!;
-      const sx = toScreenX(jp.pos.x);
-      const sy = toScreenY(jp.pos.z);
-      if (Math.abs(sx - cx) > halfInner + 10 || Math.abs(sy - cy) > halfInner + 10) continue;
+    for (let i = 0; i < state.jumpPads.length; i++) {
+      const jp = state.jumpPads[i]!;
+      const [sx, sy] = projectRadar(jp.pos.x, jp.pos.z);
+      if (Math.hypot(sx - cx, sy - cy) > radarR - 2) continue;
       ctx.beginPath();
-      ctx.arc(sx, sy, isCompact ? 2.4 : 3.2, 0, Math.PI * 2);
+      ctx.arc(sx, sy, isCompact ? 2.2 : 3.0, 0, Math.PI * 2);
       ctx.stroke();
     }
 
-    const iconPx = this.fullMapOpen ? 2 : isCompact ? 1 : 1.5;
-
-    // 4. Interactables
-    const interactables = state.interactables;
-    for (let i = 0; i < interactables.length; i++) {
-      const it = interactables[i]!;
+    // Interactables (vivid emerald-green diamonds for shrines, warm amber/gold diamonds for chests, crimson skull for Boss Spawner!)
+    const pinR = isCompact ? 3.8 : 5.2;
+    for (let i = 0; i < state.interactables.length; i++) {
+      const it = state.interactables[i]!;
       if (it.kind === 'Pot') continue;
-      const sx = toScreenX(it.pos.x);
-      const sy = toScreenY(it.pos.z);
-      if (Math.abs(sx - cx) > halfInner + 12 || Math.abs(sy - cy) > halfInner + 12) continue;
+      let [sx, sy] = projectRadar(it.pos.x, it.pos.z);
+      const dist = Math.hypot(sx - cx, sy - cy);
+      if (it.kind === 'BossSpawner' && !it.used && dist > radarR - 7) {
+        // Clamp active boss spawner pin cleanly to radar rim so player can always navigate to it!
+        const ang = Math.atan2(sy - cy, sx - cx);
+        sx = cx + Math.cos(ang) * (radarR - 7);
+        sy = cy + Math.sin(ang) * (radarR - 7);
+      } else if (dist > radarR - 3) {
+        continue;
+      }
 
       if (it.kind === 'BossSpawner') {
-        drawPixelIcon(ctx, 'skull', sx, sy, iconPx, it.used ? '#6e7b8f' : '#ff385c');
+        drawPixelIcon(ctx, 'skull', sx, sy, isCompact ? 1.2 : 1.6, it.used ? '#64748b' : '#ff334b');
       } else if (it.kind === 'ChargeShrine') {
-        const col = it.used ? '#526275' : it.variant === 'golden' ? '#ffe45e' : '#4df5ff';
-        drawPixelIcon(ctx, 'shrine', sx, sy, iconPx, col);
-      } else if (it.kind === 'Chest') {
         if (!it.used) {
-          drawPixelIcon(ctx, 'chest', sx, sy, iconPx, it.variant === 'golden' ? '#ffe45e' : '#f59e0b');
+          this.drawDiamondPin(ctx, sx, sy, pinR, it.variant === 'golden' ? '#fbbf24' : '#22c55e', '#e8ffe8');
         }
-      } else if (it.kind === 'ShadyGuy' && !it.used) {
-        drawPixelIcon(ctx, 'shop', sx, sy, iconPx, '#c084fc');
-      } else if (it.kind === 'Microwave' && !it.used) {
-        drawPixelIcon(ctx, 'microwave', sx, sy, iconPx, '#38f2ff');
-      } else if (it.kind === 'ShrineMoai' && !it.used) {
-        drawPixelIcon(ctx, 'moai', sx, sy, iconPx, '#cbd5e1');
+      } else if (it.kind === 'Chest' && !it.used) {
+        this.drawDiamondPin(ctx, sx, sy, pinR * 0.85, '#f59e0b', '#fff5cc');
       } else if (!it.used) {
-        ctx.fillStyle = '#080a10';
-        ctx.fillRect(Math.round(sx - 3), Math.round(sy - 3), 6, 6);
-        ctx.fillStyle = '#70f5ff';
-        ctx.fillRect(Math.round(sx - 2), Math.round(sy - 2), 4, 4);
+        this.drawDiamondPin(ctx, sx, sy, pinR * 0.8, '#38bdf8');
       }
     }
 
-    // 5. Boss Portal, Boss Pylons & Darkness Lamps
+    // Boss Portal, Boss Pylons & Darkness Lamps
     if (state.bossPortalOpen && state.bossPortalPos) {
-      const px = toScreenX(state.bossPortalPos.x);
-      const py = toScreenY(state.bossPortalPos.z);
-      drawPixelIcon(ctx, 'portal', px, py, Math.max(1.5, iconPx), '#d946ef');
+      let [px, py] = projectRadar(state.bossPortalPos.x, state.bossPortalPos.z);
+      const d = Math.hypot(px - cx, py - cy);
+      if (d > radarR - 7) {
+        const ang = Math.atan2(py - cy, px - cx);
+        px = cx + Math.cos(ang) * (radarR - 7);
+        py = cy + Math.sin(ang) * (radarR - 7);
+      }
+      drawPixelIcon(ctx, 'portal', px, py, isCompact ? 1.2 : 1.7, '#d946ef');
     }
 
-    const pylons = state.pylons;
-    for (let i = 0; i < pylons.length; i++) {
-      const py = pylons[i]!;
-      const sx = toScreenX(py.pos.x);
-      const sy = toScreenY(py.pos.z);
-      const pCol = py.cleansed ? '#4dff9e' : py.stolenWeaponId ? '#ffe45e' : '#ff2ec4';
-      drawPixelIcon(ctx, 'star', sx, sy, py.stolenWeaponId && !py.cleansed ? Math.max(1.5, iconPx) : iconPx, pCol);
+    for (let i = 0; i < state.pylons.length; i++) {
+      const py = state.pylons[i]!;
+      const [sx, sy] = projectRadar(py.pos.x, py.pos.z);
+      if (Math.hypot(sx - cx, sy - cy) > radarR - 3) continue;
+      this.drawDiamondPin(
+        ctx,
+        sx,
+        sy,
+        pinR * 0.9,
+        py.cleansed ? '#4ade80' : py.stolenWeaponId ? '#facc15' : '#e879f9',
+      );
     }
 
-    const lamps = state.darknessLamps;
-    for (let i = 0; i < lamps.length; i++) {
-      const lamp = lamps[i]!;
-      const sx = toScreenX(lamp.pos.x);
-      const sy = toScreenY(lamp.pos.z);
-      if (Math.abs(sx - cx) > halfInner + 10 || Math.abs(sy - cy) > halfInner + 10) continue;
-      drawPixelIcon(ctx, 'lamp', sx, sy, iconPx, lamp.lit ? '#ffe45e' : '#7c6a99');
+    for (let i = 0; i < state.darknessLamps.length; i++) {
+      const lamp = state.darknessLamps[i]!;
+      const [sx, sy] = projectRadar(lamp.pos.x, lamp.pos.z);
+      if (Math.hypot(sx - cx, sy - cy) > radarR - 3) continue;
+      this.drawDiamondPin(ctx, sx, sy, pinR * 0.85, lamp.lit ? '#fde047' : '#8b7aad');
     }
 
-    // 6. Nearby Enemies & Bosses
-    const enemies = state.enemies;
-    for (let i = 0; i < enemies.length; i++) {
-      const e = enemies[i]!;
-      const sx = toScreenX(e.pos.x);
-      const sy = toScreenY(e.pos.z);
-      if (Math.abs(sx - cx) > halfInner + 6 || Math.abs(sy - cy) > halfInner + 6) continue;
-
+    // Nearby Enemies & Active Bosses
+    for (let i = 0; i < state.enemies.length; i++) {
+      const e = state.enemies[i]!;
+      let [sx, sy] = projectRadar(e.pos.x, e.pos.z);
+      const dist = Math.hypot(sx - cx, sy - cy);
       if (e.isBoss || e.role === 'final_swarm') {
-        drawPixelIcon(ctx, 'skull', sx, sy, Math.max(1.5, iconPx), '#ff2644');
-      } else if (e.isElite || e.role === 'miniboss') {
-        ctx.fillStyle = '#080a10';
-        ctx.fillRect(Math.round(sx - 3.5), Math.round(sy - 3.5), 7, 7);
-        ctx.fillStyle = '#ffb703';
-        ctx.fillRect(Math.round(sx - 2.5), Math.round(sy - 2.5), 5, 5);
-      } else {
-        ctx.fillStyle = '#ff5768';
-        ctx.fillRect(Math.round(sx - 1.5), Math.round(sy - 1.5), 3, 3);
+        if (dist > radarR - 7) {
+          const ang = Math.atan2(sy - cy, sx - cx);
+          sx = cx + Math.cos(ang) * (radarR - 7);
+          sy = cy + Math.sin(ang) * (radarR - 7);
+        }
+        drawPixelIcon(ctx, 'skull', sx, sy, isCompact ? 1.2 : 1.7, '#ff2644');
+      } else if (dist <= radarR - 3) {
+        ctx.fillStyle = e.isElite || e.role === 'miniboss' ? '#facc15' : 'rgba(255, 76, 94, 0.88)';
+        const dotR = e.isElite || e.role === 'miniboss' ? 2.8 : 1.7;
+        ctx.beginPath();
+        ctx.arc(sx, sy, dotR, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 
-    // 7. Player Vision FOV Cone + Directional Arrow
-    const plx = toScreenX(state.player.pos.x);
-    const ply = toScreenY(state.player.pos.z);
+    // Crisp cobalt-blue Player Center Arrow pointing forward (UP!)
+    const arrSc = isCompact ? 0.82 : 1.05;
     ctx.save();
-    ctx.translate(plx, ply);
+    ctx.translate(cx, cy);
+    ctx.beginPath();
+    ctx.moveTo(0, -8.5 * arrSc);
+    ctx.lineTo(6.0 * arrSc, 6.5 * arrSc);
+    ctx.lineTo(0, 3.0 * arrSc);
+    ctx.lineTo(-6.0 * arrSc, 6.5 * arrSc);
+    ctx.closePath();
+    ctx.fillStyle = '#1e90ff';
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#05080f';
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.restore(); // End circular radar clip
+
+    // 2. Crisp Metallic Stone-Iron Circular Rim Bezel!
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radarR + 1.5, 0, Math.PI * 2);
+    ctx.lineWidth = isCompact ? 3.5 : 4.5;
+    ctx.strokeStyle = '#080a0f';
+    ctx.stroke();
+
+    const bezelGrad = ctx.createLinearGradient(0, 0, size, size);
+    bezelGrad.addColorStop(0, '#c4b8a3');
+    bezelGrad.addColorStop(0.45, '#7c7468');
+    bezelGrad.addColorStop(1, '#9e9380');
+    ctx.beginPath();
+    ctx.arc(cx, cy, radarR + 1.5, 0, Math.PI * 2);
+    ctx.lineWidth = isCompact ? 2.0 : 2.5;
+    ctx.strokeStyle = bezelGrad;
+    ctx.stroke();
+
+    // 3. Rotating Bold Black-Outlined N / E / S / W Compass Letters RIGHT ON THE RIM!
+    const cardinals: Array<{ label: string; angle: number }> = [
+      { label: 'N', angle: -Math.PI * 0.5 + headingRot },
+      { label: 'E', angle: 0 + headingRot },
+      { label: 'S', angle: Math.PI * 0.5 + headingRot },
+      { label: 'W', angle: Math.PI + headingRot },
+    ];
+    const letterR = radarR + (isCompact ? 2.0 : 2.5);
+    const fontPx = isCompact ? 10 : 12;
+    ctx.font = `900 ${fontPx}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = '#07090e';
+
+    for (let i = 0; i < cardinals.length; i++) {
+      const c = cardinals[i]!;
+      const lx = cx + Math.cos(c.angle) * letterR;
+      const ly = cy + Math.sin(c.angle) * letterR;
+      ctx.strokeText(c.label, lx, ly);
+      ctx.fillStyle = c.label === 'N' ? '#fde68a' : '#f8fafc';
+      ctx.fillText(c.label, lx, ly);
+    }
+    ctx.restore();
+  }
+
+  private renderFullSquareMap(
+    ctx: CanvasRenderingContext2D,
+    state: Readonly<SimState>,
+    size: number,
+    cx: number,
+    cy: number,
+    isTouch: boolean,
+  ): void {
+    const pad = 8;
+    const inner = size - pad * 2;
+    const scale = inner / FULLMAP_ORTHO_SIZE;
+
+    ctx.fillStyle = '#090c12';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#9e9380';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, size - 4, size - 4);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pad, pad, inner, inner);
+    ctx.clip();
+
+    if (this.terrainCanvas) {
+      const mapLeft = cx - this.terrainWorldSpan * 0.5 * scale;
+      const mapTop = cy - this.terrainWorldSpan * 0.5 * scale;
+      ctx.drawImage(this.terrainCanvas, mapLeft, mapTop, this.terrainWorldSpan * scale, this.terrainWorldSpan * scale);
+    }
+
+    const toX = (wx: number) => cx + wx * scale;
+    const toY = (wz: number) => cy + wz * scale;
+
+    for (let i = 0; i < state.interactables.length; i++) {
+      const it = state.interactables[i]!;
+      if (it.kind === 'Pot') continue;
+      const sx = toX(it.pos.x);
+      const sy = toY(it.pos.z);
+      if (it.kind === 'BossSpawner') {
+        drawPixelIcon(ctx, 'skull', sx, sy, 2, it.used ? '#64748b' : '#ff334b');
+      } else if (it.kind === 'ChargeShrine' && !it.used) {
+        this.drawDiamondPin(ctx, sx, sy, 6, it.variant === 'golden' ? '#fbbf24' : '#22c55e', '#e8ffe8');
+      } else if (it.kind === 'Chest' && !it.used) {
+        this.drawDiamondPin(ctx, sx, sy, 5, '#f59e0b', '#fff5cc');
+      }
+    }
+
+    for (let i = 0; i < state.enemies.length; i++) {
+      const e = state.enemies[i]!;
+      const sx = toX(e.pos.x);
+      const sy = toY(e.pos.z);
+      if (e.isBoss) {
+        drawPixelIcon(ctx, 'skull', sx, sy, 2, '#ff2644');
+      } else {
+        ctx.fillStyle = '#ff495c';
+        ctx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+      }
+    }
+
+    // Player arrow
+    ctx.save();
+    ctx.translate(toX(state.player.pos.x), toY(state.player.pos.z));
     ctx.rotate(-state.player.yaw);
-
-    // Subtle forward FOV cone
-    const coneLen = isCompact ? 16 : 24;
-    ctx.fillStyle = 'rgba(255, 245, 196, 0.16)';
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(-coneLen * 0.58, -coneLen);
-    ctx.lineTo(coneLen * 0.58, -coneLen);
+    ctx.moveTo(0, -10);
+    ctx.lineTo(7, 8);
+    ctx.lineTo(0, 3);
+    ctx.lineTo(-7, 8);
     ctx.closePath();
+    ctx.fillStyle = '#1e90ff';
     ctx.fill();
-
-    const arrSc = isCompact ? 0.8 : 1.0;
-    ctx.fillStyle = '#080a10';
-    ctx.beginPath();
-    ctx.moveTo(0, -8 * arrSc);
-    ctx.lineTo(6.5 * arrSc, 6.5 * arrSc);
-    ctx.lineTo(0, 3.2 * arrSc);
-    ctx.lineTo(-6.5 * arrSc, 6.5 * arrSc);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = '#fff9d6';
-    ctx.beginPath();
-    ctx.moveTo(0, -6 * arrSc);
-    ctx.lineTo(4.5 * arrSc, 4.5 * arrSc);
-    ctx.lineTo(0, 2.0 * arrSc);
-    ctx.lineTo(-4.5 * arrSc, 4.5 * arrSc);
-    ctx.closePath();
-    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#05080f';
+    ctx.stroke();
+    ctx.restore();
     ctx.restore();
 
-    // Soft inner edge shade inside map
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(pad + 1, pad + 1, inner - 2, inner - 2);
-
-    ctx.restore();
-
-    // 8. Golden corner brackets & clean header label
-    ctx.fillStyle = '#f5c542';
-    const b = isCompact ? 7 : 10;
-    ctx.fillRect(2, 2, b, 2);
-    ctx.fillRect(2, 2, 2, b);
-    ctx.fillRect(size - 2 - b, 2, b, 2);
-    ctx.fillRect(size - 4, 2, 2, b);
-    ctx.fillRect(2, size - 4, b, 2);
-    ctx.fillRect(2, size - 2 - b, 2, b);
-    ctx.fillRect(size - 2 - b, size - 4, b, 2);
-    ctx.fillRect(size - 4, size - 2 - b, 2, b);
-
-    const mapName = formatMapTitle(this.currentMapId);
-    const headerLabel = this.fullMapOpen
-      ? `${mapName} MAP${isTouch ? ' (TAP)' : ' [M]'}`
-      : mapName;
-    drawPixelText(ctx, headerLabel, cx, isCompact ? 10 : 13, {
-      pixelSize: this.fullMapOpen ? 2 : 1,
-      color: '#fff4c2',
-      outlineColor: '#080a10',
+    const headerLabel = `${formatMapTitle(this.currentMapId)} MAP${isTouch ? ' (TAP)' : ' [M]'}`;
+    ctx.fillStyle = 'rgba(9, 12, 18, 0.86)';
+    ctx.fillRect(cx - 115, pad + 6, 230, 24);
+    drawPixelText(ctx, headerLabel, cx, pad + 18, {
+      pixelSize: 2,
+      color: '#f8fafc',
+      outlineColor: '#05080f',
       outlinePx: 1,
       shadowOffsetPx: 0,
     });
-
-    if (!this.fullMapOpen && !isCompact) {
-      drawPixelText(ctx, isTouch ? 'TAP MAP' : '[M] MAP', size - 10, size - 11, {
-        pixelSize: 1,
-        color: '#a8d5e5',
-        outlineColor: '#080a10',
-        align: 'right',
-        outlinePx: 1,
-        shadowOffsetPx: 0,
-      });
-    }
   }
 }

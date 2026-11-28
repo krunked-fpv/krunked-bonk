@@ -650,7 +650,7 @@ export class MenusOverlay {
 
     const brand = document.createElement('div');
     brand.className = 'kb-title-brand';
-    const crest = createSvgIcon(getBrandCrestSvg(46), 'kb-title-crest');
+    const crest = createSvgIcon(getBrandCrestSvg(58), 'kb-title-crest');
     const brandText = document.createElement('div');
     brandText.className = 'kb-title-brand-text';
     const logo = document.createElement('h1');
@@ -672,7 +672,7 @@ export class MenusOverlay {
       const heroChip = document.createElement('span');
       heroChip.className = 'kb-badge kb-badge--hero';
       heroChip.append(
-        createSvgIcon(getCharacterAvatarSvg(selectedChar, 18), 'kb-badge-avatar'),
+        createSvgIcon(getCharacterAvatarSvg(selectedChar, 24), 'kb-badge-avatar'),
         document.createTextNode(
           `${selectedChar.displayName.toUpperCase()} • ${shortMapName(view.save.selectedMap)} T${view.save.selectedMapTier}`,
         ),
@@ -878,7 +878,7 @@ export class MenusOverlay {
       fighterHead.className = 'kb-inspector-head';
 
       const avatarWrap = createSvgIcon(
-        getCharacterAvatarSvg(selectedCharDef, 52),
+        getCharacterAvatarSvg(selectedCharDef, 68),
         'kb-inspector-avatar',
       );
       avatarWrap.style.setProperty('--kb-accent', selectedCharDef.primaryColorHex);
@@ -1171,7 +1171,7 @@ export class MenusOverlay {
 
     const avatarWrap = document.createElement('span');
     avatarWrap.className = 'kb-char-avatar';
-    avatarWrap.innerHTML = getCharacterAvatarSvg(ch, 34);
+    avatarWrap.innerHTML = getCharacterAvatarSvg(ch, 44);
     if (!unlocked) {
       const lockBadge = createSvgIcon(getUiIconSvg('lock', 12), 'kb-char-lock-badge');
       avatarWrap.appendChild(lockBadge);
@@ -1440,22 +1440,22 @@ export class MenusOverlay {
 
       // Resolve collectible SVG medallion icon & glow tint for this offer
       let medallionSvg = '';
-      let medallionTint = RARITY_COLOR_HEX[choice.rarity] ?? '#fbbf24';
+      let medallionTint = RARITY_COLOR_HEX[choice.rarity] ?? '#f0bd4f';
       if (choice.category === 'weapon') {
         const wDef = view.catalog.weapons.find((w) => w.id === choice.refId);
-        const elemCol = ELEMENT_COLORS[wDef?.element ?? 'Physical'] ?? '#fbbf24';
+        const elemCol = ELEMENT_COLORS[wDef?.element ?? 'Physical'] ?? '#f0bd4f';
         medallionTint = elemCol;
-        medallionSvg = getWeaponIconSvg(choice.refId, elemCol, 36);
+        medallionSvg = getWeaponIconSvg(choice.refId, elemCol, 44);
       } else if (choice.category === 'tome') {
         const tDef = view.catalog.tomes.find((t) => t.id === choice.refId);
         const tomeCol = tDef?.colorHex ?? '#38bdf8';
         medallionTint = tomeCol;
-        medallionSvg = getTomeIconSvg(choice.refId, tomeCol, 36);
+        medallionSvg = getTomeIconSvg(choice.refId, tomeCol, 44);
       } else if (choice.category === 'item' || choice.category === 'duplicate_item') {
-        medallionSvg = getItemIconSvg(choice.refId, choice.rarity, 34);
+        medallionSvg = getItemIconSvg(choice.refId, choice.rarity, 42);
       } else {
         medallionTint = isBalance ? '#c084fc' : '#38bdf8';
-        medallionSvg = getUiIconSvg(isBalance ? 'flame' : 'bolt', 32);
+        medallionSvg = getUiIconSvg(isBalance ? 'flame' : 'bolt', 38);
       }
 
       const medallion = createSvgIcon(medallionSvg, 'kb-offer-medallion');

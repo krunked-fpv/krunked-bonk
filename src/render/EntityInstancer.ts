@@ -31,10 +31,13 @@ import {
   createEnergyBeamMaterial,
   createMkToonMaterial,
   createOutlineMaterial,
+  createRuneDiscMaterial,
+  createSlashArcMaterial,
   getSoftContactShadowTexture,
   setMkToonHitFlash,
   setMkToonTexture,
 } from './toonShader';
+import { createCalligraphicSlashGeometry } from '../assets/SculptedMeshes';
 
 const ENEMY_ARCHETYPES = [
   'Goblin',
@@ -350,9 +353,9 @@ export class EntityInstancer {
       const mainMat = createMkToonMaterial({
         color: 0xffffff,
         map: this.assets.getTexture(pair.textureKey),
-        mapStrength: 0.42,
+        mapStrength: 0.78,
         vertexColors: true,
-        rimStrength: 0.38,
+        rimStrength: 0.28,
         emissive: pair.emissiveHex ?? 0x000000,
         emissiveIntensity: pair.emissiveIntensity ?? 0,
         gloss: pair.gloss ?? 0.12,
@@ -463,8 +466,7 @@ export class EntityInstancer {
     accretionGeo.rotateX(Math.PI * 0.5);
     const spikeGeo = new THREE.ConeGeometry(0.24, 1.7, 5);
     spikeGeo.translate(0, 0.85, 0);
-    const slashGeo = new THREE.TorusGeometry(0.88, 0.14, 4, 14, Math.PI * 0.95);
-    slashGeo.rotateX(Math.PI * 0.5);
+    const slashGeo = createCalligraphicSlashGeometry(0.42, 1.05, Math.PI * 1.18, 20);
     this.areaGeometries.push(ringGeo, discGeo, colGeo, coreGeo, accretionGeo, spikeGeo, slashGeo);
 
     for (let i = 0; i < AREA_EFFECT_POOL_CAPACITY; i++) {
@@ -474,60 +476,46 @@ export class EntityInstancer {
       const ringMat = createMkToonMaterial({
         color: 0xffd84d,
         emissive: 0xffb703,
-        emissiveIntensity: 1.0,
+        emissiveIntensity: 1.35,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.72,
         side: THREE.DoubleSide,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
       });
-      const discMat = createMkToonMaterial({
-        color: 0xffd84d,
-        emissive: 0xffb703,
-        emissiveIntensity: 0.55,
-        transparent: true,
-        opacity: 0.24,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
+      const discMat = createRuneDiscMaterial(0xffd84d, 0.78);
       const colMat = createMkToonMaterial({
         color: 0x5cf7ff,
         emissive: 0x38f2ff,
-        emissiveIntensity: 1.15,
+        emissiveIntensity: 1.35,
         transparent: true,
-        opacity: 0.58,
+        opacity: 0.62,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
       const coreMat = createMkToonMaterial({
         color: 0x10051f,
         emissive: 0x7b2cbf,
-        emissiveIntensity: 0.75,
-        rimStrength: 0.75,
+        emissiveIntensity: 1.05,
+        rimStrength: 0.85,
         rimColor: 0xe66bff,
       });
       const accretionMat = createMkToonMaterial({
         color: 0xc05eff,
         emissive: 0xb938ff,
-        emissiveIntensity: 1.25,
+        emissiveIntensity: 1.45,
         transparent: true,
-        opacity: 0.82,
+        opacity: 0.86,
         side: THREE.DoubleSide,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
       });
       const spikeMat = createMkToonMaterial({
         color: 0x7a482b,
         emissive: 0xff3b5c,
-        emissiveIntensity: 0.35,
+        emissiveIntensity: 0.55,
       });
-      const slashMat = createMkToonMaterial({
-        color: 0x7df9ff,
-        emissive: 0x5cf7ff,
-        emissiveIntensity: 1.15,
-        transparent: true,
-        opacity: 0.85,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
+      const slashMat = createSlashArcMaterial(0x7df9ff, 0.96);
 
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.position.y = 0.14;
@@ -596,15 +584,7 @@ export class EntityInstancer {
         side: THREE.DoubleSide,
         depthWrite: false,
       });
-      const fillMat = createMkToonMaterial({
-        color: 0x4df5ff,
-        emissive: 0x38e8ff,
-        emissiveIntensity: 0.75,
-        transparent: true,
-        opacity: 0.32,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
+      const fillMat = createRuneDiscMaterial(0x4df5ff, 0.72);
 
       const outerRing = new THREE.Mesh(outerGeo, outerMat);
       outerRing.position.y = 0.14;
@@ -1662,17 +1642,16 @@ export class EntityInstancer {
         (slot.spikeMat.uniforms.uEmissive!.value as THREE.Color).setHex(0x38e8ff);
       }
 
-      // 5. Melee Slash Arc (Sword, Katana, HeroSword, CorruptedSword, Scythe, DragonsBreath)
+      // 5. Hades Calligraphic Melee Slash Arc (Sword, Katana, HeroSword, CorruptedSword, Scythe, DragonsBreath)
       if (
         !isEnemyHazard &&
         (wid.includes('sword') || wid.includes('katana') || wid.includes('scythe') || wid.includes('dragon'))
       ) {
         slot.slashMesh.visible = true;
-        slot.slashMesh.scale.setScalar(r * (0.7 + frac * 0.45));
-        slot.slashMesh.rotation.y = timeSec * 10.0 + ae.id;
-        (slot.slashMat.uniforms.uBaseColor!.value as THREE.Color).setHex(hex);
-        (slot.slashMat.uniforms.uEmissive!.value as THREE.Color).setHex(hex);
-        slot.slashMat.uniforms.uOpacity!.value = Math.max(0.15, (1 - frac) * 0.9);
+        slot.slashMesh.scale.setScalar(r * (0.78 + frac * 0.48));
+        slot.slashMesh.rotation.y = timeSec * 11.5 + ae.id;
+        (slot.slashMat.uniforms.uColor!.value as THREE.Color).setHex(hex);
+        slot.slashMat.uniforms.uOpacity!.value = Math.max(0.15, (1 - frac) * 0.96);
       }
 
       // 6. Enemy Hazard Spikes / SandPillars / GhostSpikes erupting after warning telegraph fills!

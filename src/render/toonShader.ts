@@ -1,15 +1,14 @@
 /**
- * KRUNKEDBONK — MK-Toon Gooch/Cel, Triplanar Terrain, Energy Glow, Sky Dome & Outline Shaders
+ * KRUNKEDBONK — Valheim / PS1 Crunchy Pixel-Art Low-Poly Cel, Terrain, Lighting,
+ * Weapon Slash, Cyclone Vortex, Runic Decal & Painterly Cel-Cloud Sky Shaders
  *
- * Delivers a cohesive stylized low-poly cel-shaded aesthetic:
- * - 2- or 3-band crisp stepped cel lighting with Gooch warm-highlight / cool-shadow color shift
- * - Hemisphere sky/ground bounce + upward-cavity AO + crisp stylized Fresnel rim-light pop
- * - Dedicated MK-Toon Terrain Shader with slope-blended triplanar cliff projection,
- *   anti-tiling world-space macro detail, contour edge highlights, and crisp FinalBossMap inlays
- * - Soft-fading Fresnel Energy Beam & Shockwave Ring shaders (zero harsh opaque cylinders)
- * - Stylized multi-layered Sky Dome with smooth cel-shaded clouds, atmospheric horizon haze,
- *   distant mountain/citadel horizon silhouette, twinkling stars, and stylized sun/moon halo
- * - Distance-scaled, biome-harmonized BackSide inverted-hull ink outlines
+ * Art Direction:
+ * - Crisp hand-painted pixel-art texture fidelity (NearestFilter) driven by warm/cool cel lighting
+ * - 4-slot real-time dynamic point lights (weapons, shrines, lamps, boss cores, impact flashes)
+ * - Clean subtle Fresnel rim separation and sharp thin black inverted-hull outlines
+ * - Cohesive earthy biome terrain: chunky Valheim pixel moss + organic dirt clearings (Forest),
+ *   soft sunlit golden dunes (Desert), moody slate flagstones (Graveyard), stepped volcanic stone (FinalBoss)
+ * - Stylized multi-layer cel-cloud Sky Dome with atmospheric horizon mountain silhouettes
  */
 
 import * as THREE from 'three';
@@ -24,28 +23,67 @@ export interface MkToonLightingState {
   groundTint: THREE.Color;
 }
 
+export const MAX_DYNAMIC_POINT_LIGHTS = 4;
+
 /**
- * Shared global shader uniforms referenced by all MK-Toon and Outline materials.
+ * Shared global shader uniforms referenced by all MK-Toon, Terrain, and Outline materials.
  * Updating these mutates every active material in O(1) with ZERO allocations.
  */
 export const SHARED_TOON_UNIFORMS = {
   uSunDir: { value: new THREE.Vector3(0.45, 0.82, 0.35).normalize() },
   uSunColor: { value: new THREE.Color(1.0, 0.96, 0.84) },
   uAmbientColor: { value: new THREE.Color(0.75, 0.75, 0.75) },
-  uShadowTint: { value: new THREE.Color(0.22, 0.31, 0.56) },
+  uShadowTint: { value: new THREE.Color(0.16, 0.22, 0.44) },
   uHighlightTint: { value: new THREE.Color(1.0, 0.96, 0.84) },
   uSkyTint: { value: new THREE.Color(0.24, 0.72, 0.88) },
   uGroundTint: { value: new THREE.Color(0.18, 0.38, 0.32) },
   uCelBands: { value: 3.0 },
   uTime: { value: 0.0 },
   uWindDir: { value: new THREE.Vector2(0.84, 0.54) },
+  /** 4 real-time dynamic point lights: xyz = worldPos, w = range (0 = disabled) */
+  uPointLightPos: {
+    value: [
+      new THREE.Vector4(0, 0, 0, 0),
+      new THREE.Vector4(0, 0, 0, 0),
+      new THREE.Vector4(0, 0, 0, 0),
+      new THREE.Vector4(0, 0, 0, 0),
+    ],
+  },
+  /** 4 real-time dynamic point light colors: rgb = linear color, w = intensity */
+  uPointLightCol: {
+    value: [
+      new THREE.Vector4(1, 0.7, 0.3, 0),
+      new THREE.Vector4(0.3, 0.85, 1, 0),
+      new THREE.Vector4(1, 0.4, 0.2, 0),
+      new THREE.Vector4(0.8, 0.4, 1, 0),
+    ],
+  },
 };
 
 export const SHARED_OUTLINE_UNIFORMS = {
   uGlobalThickness: { value: 1.0 },
   uOutlineEnabled: { value: 1.0 },
-  uBiomeInkTint: { value: new THREE.Color(0x0d1220) },
+  uBiomeInkTint: { value: new THREE.Color(0x090814) },
 };
+
+/**
+ * Update a single real-time dynamic point light slot [0..3] with ZERO allocations.
+ */
+export function setGlobalPointLight(
+  index: number,
+  x: number,
+  y: number,
+  z: number,
+  range: number,
+  r: number,
+  g: number,
+  b: number,
+  intensity: number,
+): void {
+  if (index < 0 || index >= MAX_DYNAMIC_POINT_LIGHTS) return;
+  SHARED_TOON_UNIFORMS.uPointLightPos.value[index]!.set(x, y, z, range);
+  SHARED_TOON_UNIFORMS.uPointLightCol.value[index]!.set(r, g, b, intensity);
+}
 
 /**
  * Update global MK-Toon lighting uniforms in-place (zero allocations).
@@ -144,7 +182,53 @@ export interface MkToonMaterialOptions {
   mapStrength?: number;
   /** Specular/gloss highlight band boost [0..1] for metallic/ice/slime surfaces. */
   gloss?: number;
+  /** Comic pen-and-ink shadow hatching intensity [0..1]. Default 0.38. */
+  hatchStrength?: number;
 }
+
+const POINT_LIGHTS_GLSL = /* glsl */ `
+uniform vec4 uPointLightPos[4];
+uniform vec4 uPointLightCol[4];
+
+vec3 evalDynamicPointLights(vec3 worldPos, vec3 N, vec3 albedo) {
+  vec3 accum = vec3(0.0);
+  for (int i = 0; i < 4; i++) {
+    float range = uPointLightPos[i].w;
+    if (range > 0.01) {
+      vec3 toLight = uPointLightPos[i].xyz - worldPos;
+      float dist = length(toLight);
+      if (dist < range) {
+        vec3 lDir = toLight / max(dist, 0.001);
+        float atten = 1.0 - smoothstep(0.0, range, dist);
+        atten *= atten;
+        float ndl = max(dot(N, lDir) * 0.65 + 0.35, 0.0);
+        // Subtle cel step on point-light pools for cohesive comic look
+        float stepNdl = mix(ndl, smoothstep(0.22, 0.68, ndl), 0.45);
+        accum += albedo * uPointLightCol[i].rgb * uPointLightCol[i].w * atten * stepNdl;
+      }
+    }
+  }
+  return accum;
+}
+`;
+
+const INK_HATCH_GLSL = /* glsl */ `
+// Crisp world-triplanar pen-and-ink diagonal cross-hatching in deep shadows (Hades / Mignola aesthetic)
+float evalComicHatch(vec3 worldPos, vec3 N, float shadowDepth) {
+  if (shadowDepth < 0.05) return 1.0;
+  vec3 an = abs(N);
+  vec2 p = an.y > 0.65
+    ? worldPos.xz
+    : (an.x > an.z ? worldPos.zy : worldPos.xy);
+  float d1 = sin((p.x + p.y) * 28.0);
+  float d2 = sin((p.x - p.y) * 28.0);
+  float line1 = smoothstep(-0.72, -0.32, d1);
+  float line2 = smoothstep(-0.82, -0.45, d2);
+  float hatch = mix(1.0, line1, smoothstep(0.15, 0.65, shadowDepth) * 0.42);
+  hatch *= mix(1.0, line2, smoothstep(0.62, 0.96, shadowDepth) * 0.28);
+  return hatch;
+}
+`;
 
 const MK_TOON_VERTEX_SHADER = /* glsl */ `
 #include <common>
@@ -159,9 +243,11 @@ varying vec3 vWorldNormal;
 varying vec3 vWorldPos;
 varying vec2 vUv;
 varying vec3 vTintColor;
+varying float vLocalY;
 
 void main() {
   vUv = uv * uUvScale;
+  vLocalY = position.y;
 
   vec3 tint = vec3(1.0);
   #ifdef USE_COLOR
@@ -187,12 +273,13 @@ void main() {
   if (uWindStrength > 0.0001) {
     float bend = clamp(uv.y, 0.0, 1.0);
     bend = bend * bend;
-    float phase = uTime * 2.4 + worldPos4.x * 0.21 + worldPos4.z * 0.17;
-    float wave = sin(phase) * 0.62 + sin(phase * 1.85 + 1.3) * 0.28 + cos(uTime * 0.8 + worldPos4.x * 0.06) * 0.18;
+    float phase = uTime * 2.55 + worldPos4.x * 0.23 + worldPos4.z * 0.19;
+    float gust = sin(uTime * 0.85 + worldPos4.x * 0.055 + worldPos4.z * 0.04) * 0.5 + 0.5;
+    float wave = sin(phase) * 0.58 + sin(phase * 1.9 + 1.3) * 0.28 + gust * 0.34;
     float sway = wave * uWindStrength * bend;
     worldPos4.x += uWindDir.x * sway;
     worldPos4.z += uWindDir.y * sway;
-    worldPos4.y -= abs(sway) * 0.16;
+    worldPos4.y -= abs(sway) * 0.18;
   }
 
   vWorldPos = worldPos4.xyz;
@@ -232,11 +319,16 @@ uniform float uOpacity;
 uniform float uGloss;
 uniform float uFlatShading;
 uniform float uWindStrength;
+uniform float uHatchStrength;
 
 varying vec3 vWorldNormal;
 varying vec3 vWorldPos;
 varying vec2 vUv;
 varying vec3 vTintColor;
+varying float vLocalY;
+
+${POINT_LIGHTS_GLSL}
+${INK_HATCH_GLSL}
 
 void main() {
   vec3 N;
@@ -258,71 +350,87 @@ void main() {
     albedo *= mix(vec3(1.0), texel.rgb, uMapStrength);
   }
 
-  // Half-Lambert N dot L for stylized cel readability
+  // Soft-stepped Valheim/PS1 directional cel shading that lets hand-painted pixel textures shine cleanly!
   float ndl = dot(N, L);
   float halfLambert = ndl * 0.5 + 0.5;
+  float groundAo = mix(0.84, 1.03, smoothstep(-0.05, 1.15, vLocalY));
 
-  // Stepped 2-band or 3-band MK-Toon quantization with crisp micro-AA edge
   float cel;
   if (uCelBands < 2.5) {
-    cel = smoothstep(0.46, 0.51, halfLambert);
+    cel = smoothstep(0.42, 0.54, halfLambert);
   } else {
-    float band1 = smoothstep(0.34, 0.39, halfLambert) * 0.50;
-    float band2 = smoothstep(0.65, 0.70, halfLambert) * 0.50;
+    float band1 = smoothstep(0.28, 0.40, halfLambert) * 0.50;
+    float band2 = smoothstep(0.60, 0.72, halfLambert) * 0.50;
     cel = band1 + band2;
   }
 
-  // Rich Gooch cool-shadow -> vibrant midtone -> warm-highlight shift (never muddy black)
-  vec3 coolShadow = albedo * uShadowTint * (0.72 + 0.28 * uAmbientColor);
-  vec3 midTone = albedo * mix(uAmbientColor, uSunColor, 0.45) * 1.04;
-  vec3 warmLit = albedo * mix(uSunColor, uHighlightTint, 0.48) * 1.16;
+  // Cohesive earthy cool-shadow -> rich natural midtone -> warm sunlit highlight
+  vec3 deepInkShadow = albedo * uShadowTint * (0.62 + 0.34 * uAmbientColor);
+  vec3 midTone = albedo * mix(uAmbientColor, uSunColor, 0.48) * 1.06;
+  vec3 warmLit = albedo * mix(uSunColor, uHighlightTint, 0.42) * 1.18;
   vec3 litColor = cel < 0.5
-    ? mix(coolShadow, midTone, cel * 2.0)
+    ? mix(deepInkShadow, midTone, cel * 2.0)
     : mix(midTone, warmLit, (cel - 0.5) * 2.0);
 
-  // Subtle hemisphere sky/ground bounce for crisp 3D volume separation
+  // Hatching kept optional (default 0.0) so crunchy PS1 pixel textures stay clean and legible
+  if (uHatchStrength > 0.01 && uWindStrength < 0.001) {
+    float shadowDepth = clamp(1.0 - cel * 1.85, 0.0, 1.0);
+    float hatch = evalComicHatch(vWorldPos, N, shadowDepth);
+    litColor *= mix(1.0, hatch, uHatchStrength);
+  }
+
+  litColor *= groundAo;
+
+  // Hemisphere sky/ground bounce for grounded 3D readability
   float hemiFactor = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 hemiBounce = mix(uGroundTint, uSkyTint, hemiFactor) * albedo * 0.18;
+  vec3 hemiBounce = mix(uGroundTint, uSkyTint, hemiFactor) * albedo * 0.14;
   litColor += hemiBounce;
 
-  // Stylized cel-specular glint for armor, ice, slime, blades & gems
+  // Real-time dynamic point lights (staves, fireballs, lamps, shrines, pylons!)
+  litColor += evalDynamicPointLights(vWorldPos, N, albedo);
+
+  // Crisp specular highlight band on armor, steel, sunglasses, ice & slime
   if (uGloss > 0.01) {
     vec3 H = normalize(L + V);
     float ndh = max(dot(N, H), 0.0);
-    float spec = smoothstep(0.84, 0.89, ndh) * uGloss;
-    litColor += uHighlightTint * spec * 0.72;
+    float specMain = smoothstep(0.86, 0.91, ndh) * uGloss;
+    float specBroad = smoothstep(0.68, 0.74, ndh) * uGloss * 0.20;
+    litColor += uHighlightTint * (specMain * 0.85 + specBroad);
   }
 
-  // Crisp Fresnel rim-light edge pop harmonizing with sun + sky
+  // Tasteful clean silhouette Fresnel rim (never milky white washout)
   float ndv = clamp(dot(N, V), 0.0, 1.0);
   float fresnel = pow(1.0 - ndv, uRimPower);
-  float sunGate = smoothstep(-0.28, 0.48, ndl) * 0.74 + 0.26;
-  float rimStep = smoothstep(uRimThreshold, uRimThreshold + 0.09, fresnel * sunGate);
-  vec3 rimTint = mix(uRimColor, uSkyTint * 1.35 + vec3(0.15), 0.25);
-  litColor += rimTint * rimStep * uRimStrength;
+  float sunGate = smoothstep(-0.20, 0.48, ndl);
+  float keyRimStep = smoothstep(uRimThreshold, uRimThreshold + 0.10, fresnel * (0.24 + 0.76 * sunGate));
+  vec3 keyRimTint = mix(uRimColor, uHighlightTint * 1.05, 0.35);
+  litColor += keyRimTint * keyRimStep * (uRimStrength * 0.72);
 
-  // Emissive accents
+  // Subtle dark-side atmospheric sky counter-rim so shadows keep form
+  float backRimStep = smoothstep(0.62, 0.76, fresnel * (1.0 - sunGate));
+  litColor += (uSkyTint * 0.72 + vec3(0.05, 0.06, 0.10)) * backRimStep * (uRimStrength * 0.24);
+
+  // HDR Emissive accents (values > 1.0 trigger subtle selective bloom on eyes/runes/lasers)
   litColor += uEmissive * uEmissiveIntensity;
 
-  // Crisp arcade white-gold hit-flash override
+  // Crisp arcade hit-flash override
   if (uHitFlash > 0.001) {
-    litColor = mix(litColor, vec3(1.0, 0.98, 0.88), clamp(uHitFlash, 0.0, 1.0));
+    litColor = mix(litColor, vec3(1.18, 1.06, 0.92), clamp(uHitFlash * 0.62, 0.0, 0.62));
   }
 
   gl_FragColor = vec4(litColor, uOpacity);
 
   #include <fog_fragment>
-  #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
 `;
 
 /**
- * Create a custom MK-Toon Gooch/Cel ShaderMaterial referencing global lighting uniforms.
+ * Create a custom MK-Toon Hades Inked/Cel ShaderMaterial referencing global lighting uniforms.
  */
 export function createMkToonMaterial(options: MkToonMaterialOptions = {}): THREE.ShaderMaterial {
   const baseColor = new THREE.Color(options.color ?? 0xffffff);
-  const rimColor = new THREE.Color(options.rimColor ?? 0xd8f8ff);
+  const rimColor = new THREE.Color(options.rimColor ?? 0xe2f7ff);
   const emissive = new THREE.Color(options.emissive ?? 0x000000);
   const uvScale = options.uvScale ?? [1, 1];
 
@@ -343,17 +451,20 @@ export function createMkToonMaterial(options: MkToonMaterialOptions = {}): THREE
     uCelBands: SHARED_TOON_UNIFORMS.uCelBands,
     uTime: SHARED_TOON_UNIFORMS.uTime,
     uWindDir: SHARED_TOON_UNIFORMS.uWindDir,
+    uPointLightPos: SHARED_TOON_UNIFORMS.uPointLightPos,
+    uPointLightCol: SHARED_TOON_UNIFORMS.uPointLightCol,
     uWindStrength: { value: options.windStrength ?? 0.0 },
     uRimColor: { value: rimColor },
-    uRimStrength: { value: options.rimStrength ?? 0.34 },
-    uRimPower: { value: options.rimPower ?? 2.8 },
-    uRimThreshold: { value: options.rimThreshold ?? 0.42 },
+    uRimStrength: { value: options.rimStrength ?? 0.38 },
+    uRimPower: { value: options.rimPower ?? 2.6 },
+    uRimThreshold: { value: options.rimThreshold ?? 0.4 },
     uEmissive: { value: emissive },
     uEmissiveIntensity: { value: options.emissiveIntensity ?? 0.0 },
     uHitFlash: { value: 0.0 },
     uOpacity: { value: options.opacity ?? 1.0 },
     uGloss: { value: options.gloss ?? 0.0 },
     uFlatShading: { value: options.flatShading ? 1.0 : 0.0 },
+    uHatchStrength: { value: options.hatchStrength ?? 0.0 },
   };
 
   return new THREE.ShaderMaterial({
@@ -370,7 +481,7 @@ export function createMkToonMaterial(options: MkToonMaterialOptions = {}): THREE
 }
 
 // ============================================================================
-// DEDICATED MK-TOON TERRAIN SHADER (SLOPE-BLENDED TRIPLANAR CLIFFS + MACRO NOISE)
+// DEDICATED HADES PAINTERLY TRIPLANAR TERRAIN SHADER (ZERO TILING / ZERO JAGGIES)
 // ============================================================================
 
 export interface MkTerrainMaterialOptions {
@@ -437,7 +548,9 @@ varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
 varying vec3 vTintColor;
 
-// Smooth procedural macro-noise to eliminate repetitive texture tiling across wide arenas
+${POINT_LIGHTS_GLSL}
+${INK_HATCH_GLSL}
+
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
   p += dot(p, p + 45.32);
@@ -455,112 +568,156 @@ float valueNoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+float fbm2(vec2 p) {
+  float v = 0.0;
+  v += valueNoise(p) * 0.55;
+  v += valueNoise(p * 2.13 + vec2(11.7, 5.3)) * 0.30;
+  v += valueNoise(p * 4.41 - vec2(4.1, 8.9)) * 0.15;
+  return v;
+}
+
 void main() {
-  // Crisp faceted low-poly face normal via derivatives blended lightly with vertex normal
+  // Smooth painterly terrain normal with light low-poly facet crispness (avoids harsh triangular checker artifacts)
   vec3 flatN = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
   if (!gl_FrontFacing) flatN = -flatN;
-  vec3 N = normalize(mix(normalize(vWorldNormal), flatN, 0.78));
+  vec3 smoothN = normalize(vWorldNormal);
+  vec3 N = normalize(mix(smoothN, flatN, 0.38));
 
   vec3 V = normalize(cameraPosition - vWorldPos);
   vec3 L = normalize(uSunDir);
 
-  // World-space crisp ground UV (3.6m per 64x64 pixel tile -> fine detailed pixel art!)
-  vec2 groundUv = vWorldPos.xz * 0.275;
-  vec3 groundTex = uHasMap > 0.5 ? texture2D(uMap, groundUv).rgb : vec3(1.0);
+  // Crisp Valheim/PS1 world-space pixel-art texel scale so chunky hand-painted ground tiles read clearly!
+  vec2 groundUvA = vWorldPos.xz * (uBiomeMode > 0.5 && uBiomeMode < 1.5 ? 0.08 : 0.145);
+  vec2 groundUvB = (vWorldPos.xz * 0.055) + vec2(0.37, 0.61);
+  vec3 groundTex = uHasMap > 0.5
+    ? mix(texture2D(uMap, groundUvA).rgb, texture2D(uMap, groundUvB).rgb, uBiomeMode > 0.5 && uBiomeMode < 1.5 ? 0.45 : 0.18)
+    : vec3(1.0);
 
-  // Triplanar cliff projection so steep rock faces show horizontal geological strata, ZERO stretching!
+  // Triplanar cliff stone masonry so vertical ledges show weathered mossy stone/sandstone blocks!
   vec3 absN = abs(N);
   vec2 cliffUv = absN.x > absN.z
-    ? vec2(vWorldPos.z * 0.22, vWorldPos.y * 0.22)
-    : vec2(vWorldPos.x * 0.22, vWorldPos.y * 0.22);
+    ? vec2(vWorldPos.z * 0.14, vWorldPos.y * 0.15)
+    : vec2(vWorldPos.x * 0.14, vWorldPos.y * 0.15);
   vec3 cliffTex = uHasCliffMap > 0.5 ? texture2D(uCliffMap, cliffUv).rgb : groundTex;
 
-  // Slope mask: 0 = flat walkable plateau, 1 = steep cliff wall
-  float slopeMask = smoothstep(0.72, 0.90, 1.0 - clamp(N.y, 0.0, 1.0));
+  // Slope mask: 0 = walkable floor, 1 = steep cliff/rock wall
+  float slopeMask = smoothstep(0.30, 0.54, 1.0 - clamp(N.y, 0.0, 1.0));
   vec3 detailTex = mix(groundTex, cliffTex, slopeMask);
 
-  // Subtle world-space macro biome patches (sunlit clearings / wind-swept dunes / moss patches)
-  float macro1 = valueNoise(vWorldPos.xz * 0.045);
-  float macro2 = valueNoise(vWorldPos.xz * 0.13 + vec2(17.3, 9.1));
-  float macroShade = 0.91 + macro1 * 0.14 + (macro2 - 0.5) * 0.06;
+  // Subtle organic macro lighting patches across hills & valleys
+  float macroA = fbm2(vWorldPos.xz * 0.036);
+  float macroB = fbm2(vWorldPos.xz * 0.088 + vec2(17.3, 9.1));
+  float macroShade = 0.90 + macroA * 0.18 + (macroB - 0.5) * 0.06;
 
-  vec3 albedo = uBaseColor * vTintColor * mix(vec3(1.0), detailTex, 0.46) * macroShade;
-
-  // Crisp analytical details per biome (zero jagged vertex-aliasing!)
+  float texWeight = uBiomeMode > 0.5 && uBiomeMode < 1.5 ? 0.44 : uBiomeMode > 2.5 ? 0.72 : 0.84;
+  vec3 albedo = uBaseColor * vTintColor * mix(vec3(1.0), detailTex, texWeight) * macroShade;
   vec3 extraEmissive = vec3(0.0);
-  if (uBiomeMode > 2.5) {
-    // FinalBossMap: Razor-sharp glowing gold concentric rings + 11 radial rune spokes!
-    float r = length(vWorldPos.xz);
-    float ringDist = min(
-      min(abs(r - 22.0), abs(r - 48.0)),
-      min(abs(r - 76.0), abs(r - (uArenaRadius - 4.0)))
-    );
-    float goldRing = 1.0 - smoothstep(0.45, 0.85, ringDist);
-    float innerTrim = 1.0 - smoothstep(0.12, 0.26, abs(ringDist - 1.15));
-    float ang = atan(vWorldPos.z, vWorldPos.x);
-    float spokeWave = abs(sin(ang * 11.0));
-    float spokeMask = (1.0 - smoothstep(0.02, 0.055, spokeWave)) * step(18.0, r) * step(r, uArenaRadius - 5.0);
-    float inlay = clamp(goldRing + innerTrim * 0.65 + spokeMask * 0.55, 0.0, 1.0);
-    vec3 goldCol = vec3(0.98, 0.78, 0.24);
-    albedo = mix(albedo, goldCol, inlay * 0.78);
-    extraEmissive += goldCol * (goldRing * 0.22 + innerTrim * 0.12) * (0.85 + 0.15 * sin(uTime * 2.5 - r * 0.15));
 
-    // Molten edge glow near arena chasm rim
-    float edgeGlow = smoothstep(uArenaRadius - 5.5, uArenaRadius + 1.0, r);
-    extraEmissive += vec3(1.0, 0.28, 0.12) * edgeGlow * (0.45 + 0.15 * sin(uTime * 3.5 + ang * 4.0));
+  if (uBiomeMode > 2.5) {
+    // FINAL BOSS ARENA: Weathered stepped carved desert-volcanic stone slabs + warm rim rings & molten chasm!
+    float r = length(vWorldPos.xz);
+    float ang = atan(vWorldPos.z, vWorldPos.x);
+
+    // Carved radial stone block rings with dark recessed seams
+    float radialTile = abs(fract(r / 6.5) - 0.5);
+    float angularTile = abs(fract((ang / 6.2831853) * 36.0) - 0.5);
+    float slabSeam = (1.0 - smoothstep(0.015, 0.04, radialTile)) +
+                     (1.0 - smoothstep(0.015, 0.04, angularTile)) * step(8.0, r);
+    float slabId = hash21(vec2(floor(r / 6.5), floor((ang / 6.2831853) * 36.0)));
+    albedo *= (0.90 + slabId * 0.18) * (1.0 - clamp(slabSeam, 0.0, 1.0) * 0.36);
+
+    // Subtle inlaid bronze battle-ring markings (clean tactical cues, not loud yellow glow!)
+    float d1 = abs(r - 22.0);
+    float d2 = abs(r - 48.0);
+    float d3 = abs(r - (uArenaRadius - 3.6));
+    float ringDist = min(d1, min(d2, d3));
+    float bronzeBand = 1.0 - smoothstep(0.18, 0.34, ringDist);
+    albedo = mix(albedo, vec3(0.76, 0.52, 0.24), bronzeBand * 0.55);
+
+    // Glowing molten volcanic fissures strictly hugging the outer cliff abyss edge!
+    float chasmMask = smoothstep(uArenaRadius - 2.4, uArenaRadius + 0.6, r);
+    float crackNoise = fbm2(vWorldPos.xz * 0.24 + vec2(uTime * 0.05, -uTime * 0.04));
+    float magmaVeins = smoothstep(0.46, 0.70, crackNoise) * chasmMask;
+    extraEmissive += vec3(1.30, 0.28, 0.06) * (chasmMask * 0.24 + magmaVeins * 0.72);
   } else if (uBiomeMode > 0.5 && uBiomeMode < 1.5) {
-    // Desert: Crisp wind-carved sand dune micro-ripples on flat slopes
-    float ripple = sin(vWorldPos.x * 1.15 + vWorldPos.z * 0.65 + sin(vWorldPos.z * 0.18) * 3.5);
-    float rippleBand = smoothstep(-0.15, 0.35, ripple) * (1.0 - slopeMask);
-    albedo *= (0.955 + rippleBand * 0.085);
+    // DESERT: Clean warm sunlit smooth sand dunes with gentle organic wind-blown contours!
+    float warp = fbm2(vWorldPos.xz * 0.048) * 5.2;
+    float duneFlow = sin((vWorldPos.x * 0.17 + vWorldPos.z * 0.11) + warp) * 0.5 + 0.5;
+    float fineRipple = sin((vWorldPos.x * 0.62 - vWorldPos.z * 0.38) + warp * 1.2) * 0.5 + 0.5;
+    float sandSculpt = mix(0.90, 1.08, duneFlow * 0.72 + fineRipple * 0.28);
+    albedo *= mix(sandSculpt, 1.0, slopeMask);
   } else if (uBiomeMode > 1.5 && uBiomeMode < 2.5) {
-    // Graveyard: Subtle moonlit flagstone avenue border bevels
+    // GRAVEYARD: Weathered dark gothic cemetery flagstones with inked mortar seams & twilight grass
     vec2 cell = abs(fract((vWorldPos.xz + 10.0) / 20.0) - 0.5) * 20.0;
-    float edgeDist = min(abs(cell.x - 2.3), abs(cell.y - 2.3));
-    float curb = (1.0 - smoothstep(0.15, 0.38, edgeDist)) * (1.0 - slopeMask);
-    albedo = mix(albedo, albedo * 1.28, curb * 0.45);
+    float isAvenue = 1.0 - smoothstep(2.05, 2.65, min(cell.x, cell.y));
+    float curbEdge = (1.0 - smoothstep(0.08, 0.24, min(abs(cell.x - 2.35), abs(cell.y - 2.35)))) * (1.0 - slopeMask);
+
+    vec2 pUv = vWorldPos.xz * 0.52;
+    pUv.x += floor(pUv.y) * 0.5;
+    vec2 paver = abs(fract(pUv) - 0.5);
+    float mortarCrack = smoothstep(0.42, 0.48, max(paver.x, paver.y));
+    float stoneTint = 0.88 + 0.20 * hash21(floor(pUv));
+    vec3 gothicFlagstone = vec3(0.32, 0.33, 0.44) * stoneTint * (1.0 - mortarCrack * 0.48);
+
+    albedo = mix(albedo, gothicFlagstone, isAvenue * (1.0 - slopeMask) * 0.80);
+    albedo *= (1.0 - curbEdge * 0.30);
   } else {
-    // Forest: Subtle sunlit cliff-lip highlight where grass overhangs cliff edges
-    float cliffLip = smoothstep(0.28, 0.52, 1.0 - clamp(N.y, 0.0, 1.0)) * (1.0 - slopeMask);
-    albedo = mix(albedo, albedo * 1.14, cliffLip * 0.55);
+    // FOREST: Authentic Valheim/PS1 earthy olive-moss grass with organic biome-tinted forest loam patches!
+    float dirtNoise = fbm2(vWorldPos.xz * 0.068 + vec2(3.4, -2.1));
+    float spawnClearing = 1.0 - smoothstep(2.4, 7.0, length(vWorldPos.xz) + (dirtNoise - 0.5) * 3.8);
+    float dirtPatches = smoothstep(0.66, 0.82, dirtNoise) * 0.62;
+    float dirtMask = clamp(max(spawnClearing * 0.42, dirtPatches), 0.0, 0.68) * (1.0 - slopeMask);
+
+    // Rich dark earthy forest loam tinted by biome vertex palette (warm mud in T1, cool dark soil in T2 twilight!)
+    vec3 biomeLoam = vec3(0.36, 0.25, 0.14) * mix(vec3(1.0), vTintColor * 1.55, 0.52) * (0.85 + 0.26 * detailTex.g);
+    albedo = mix(albedo, biomeLoam, dirtMask * 0.72);
+
+    // Crisp subtle mossy cliff overhang lip where vertical stone walls meet grass hills
+    float cliffEdge = smoothstep(0.24, 0.42, 1.0 - clamp(N.y, 0.0, 1.0)) * (1.0 - slopeMask);
+    float cliffCrease = smoothstep(0.34, 0.46, 1.0 - clamp(N.y, 0.0, 1.0)) * (1.0 - smoothstep(0.46, 0.62, 1.0 - clamp(N.y, 0.0, 1.0)));
+    albedo = mix(albedo, albedo * 1.08, cliffEdge * 0.35);
+    albedo *= (1.0 - cliffCrease * 0.24);
   }
 
-  // MK-Toon Stepped Cel Lighting + Gooch warm/cool color ramp
+  // Natural Valheim/PS1 stepped cel terrain lighting (crisp readable shadows, zero muddy artifacts)
   float ndl = dot(N, L);
   float halfLambert = ndl * 0.5 + 0.5;
   float cel;
   if (uCelBands < 2.5) {
-    cel = smoothstep(0.45, 0.52, halfLambert);
+    cel = smoothstep(0.42, 0.52, halfLambert);
   } else {
-    float band1 = smoothstep(0.32, 0.39, halfLambert) * 0.50;
-    float band2 = smoothstep(0.64, 0.71, halfLambert) * 0.50;
+    float band1 = smoothstep(0.28, 0.40, halfLambert) * 0.50;
+    float band2 = smoothstep(0.60, 0.72, halfLambert) * 0.50;
     cel = band1 + band2;
   }
 
-  vec3 coolShadow = albedo * uShadowTint * (0.76 + 0.24 * uAmbientColor);
-  vec3 midTone = albedo * mix(uAmbientColor, uSunColor, 0.42) * 1.03;
-  vec3 warmLit = albedo * mix(uSunColor, uHighlightTint, 0.45) * 1.13;
+  vec3 coolShadow = albedo * uShadowTint * (0.64 + 0.32 * uAmbientColor);
+  vec3 midTone = albedo * mix(uAmbientColor, uSunColor, 0.46) * 1.05;
+  vec3 warmLit = albedo * mix(uSunColor, uHighlightTint, 0.42) * 1.15;
   vec3 litColor = cel < 0.5
     ? mix(coolShadow, midTone, cel * 2.0)
     : mix(midTone, warmLit, (cel - 0.5) * 2.0);
 
   // Subtle hemisphere bounce
   float hemiFactor = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  litColor += mix(uGroundTint, uSkyTint, hemiFactor) * albedo * 0.14;
+  litColor += mix(uGroundTint, uSkyTint, hemiFactor) * albedo * 0.12;
 
-  // Grazing stylized terrain rim sheen on hillcrests
+  // Real-time dynamic point-light pools (lamps, shrines, fireballs, boss cores!)
+  litColor += evalDynamicPointLights(vWorldPos, N, albedo);
+
+  // Subtle hillcrest ridge sheen (weighted off flat ground)
   float ndv = clamp(dot(N, V), 0.0, 1.0);
-  float fresnel = pow(1.0 - ndv, 3.4);
-  float rimStep = smoothstep(0.46, 0.58, fresnel * (smoothstep(-0.2, 0.5, ndl) * 0.7 + 0.3));
-  litColor += uRimColor * rimStep * uRimStrength;
+  float fresnel = pow(1.0 - ndv, 4.0);
+  float ridgeGate = mix(0.10, 0.85, slopeMask);
+  float rimStep = smoothstep(0.54, 0.68, fresnel * (smoothstep(-0.2, 0.5, ndl) * 0.7 + 0.3)) * ridgeGate;
+  litColor += uRimColor * rimStep * (uRimStrength * 0.65);
 
-  // Emissive (Floor-is-Lava + Citadel runes)
+  // Emissive (Floor-is-Lava, outer chasm magma)
   litColor += uEmissive * uEmissiveIntensity + extraEmissive;
 
   gl_FragColor = vec4(litColor, 1.0);
 
   #include <fog_fragment>
-  #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
 `;
@@ -585,6 +742,8 @@ export function createMkTerrainMaterial(options: MkTerrainMaterialOptions): THRE
     uGroundTint: SHARED_TOON_UNIFORMS.uGroundTint,
     uCelBands: SHARED_TOON_UNIFORMS.uCelBands,
     uTime: SHARED_TOON_UNIFORMS.uTime,
+    uPointLightPos: SHARED_TOON_UNIFORMS.uPointLightPos,
+    uPointLightCol: SHARED_TOON_UNIFORMS.uPointLightCol,
     uRimColor: { value: rimColor },
     uRimStrength: { value: options.rimStrength ?? 0.16 },
     uEmissive: { value: new THREE.Color(0x000000) },
@@ -601,12 +760,12 @@ export function createMkTerrainMaterial(options: MkTerrainMaterialOptions): THRE
 }
 
 // ============================================================================
-// SOFT-FADING FRESNEL ENERGY BEAM & SHOCKWAVE RING SHADERS (ADDITIVE ARCADE VFX)
+// HADES CALLIGRAPHIC ENERGY BEAM, SHOCKWAVE, SLASH ARC, RUNE & CYCLONE SHADERS
 // ============================================================================
 
 export function createEnergyBeamMaterial(
   color: THREE.ColorRepresentation = 0x5cf7ff,
-  opacity = 0.68,
+  opacity = 0.72,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -656,13 +815,12 @@ export function createEnergyBeamMaterial(
       void main() {
         vec3 N = normalize(vWorldNormal);
         vec3 V = normalize(cameraPosition - vWorldPos);
-        // Core-bright, edge-feathered radial falloff (eliminates hard PVC-pipe cylinder edges!)
-        float core = pow(abs(dot(N, V)), 1.35);
-        // Smooth vertical fade at bottom and far top of light pillar
-        float vFade = smoothstep(0.0, 0.14, vUv.y) * (1.0 - smoothstep(0.42, 1.0, vUv.y));
-        // Subtle rising energy bands
-        float band = 0.82 + 0.18 * sin(vUv.y * 22.0 - uTime * 11.0);
-        vec3 col = mix(uColor * vInstColor, vec3(1.0), core * 0.45) * band;
+        float core = pow(abs(dot(N, V)), 1.45);
+        float vFade = smoothstep(0.0, 0.12, vUv.y) * (1.0 - smoothstep(0.45, 1.0, vUv.y));
+        float helix = 0.78 + 0.22 * sin(vUv.y * 28.0 + vUv.x * 12.566 - uTime * 13.0);
+        vec3 baseCol = uColor * vInstColor;
+        // HDR hot center drives lush bloom!
+        vec3 col = mix(baseCol * 1.25, vec3(1.85, 1.82, 1.65), pow(core, 2.2) * 0.65) * helix;
         float alpha = core * vFade * uOpacity;
         if (alpha < 0.01) discard;
         gl_FragColor = vec4(col, alpha);
@@ -680,7 +838,7 @@ export function createEnergyBeamMaterial(
 
 export function createShockwaveRingMaterial(
   color: THREE.ColorRepresentation = 0xffd84d,
-  opacity = 0.85,
+  opacity = 0.9,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -716,17 +874,21 @@ export function createShockwaveRingMaterial(
       #include <fog_pars_fragment>
       uniform vec3 uColor;
       uniform float uOpacity;
+      uniform float uTime;
       varying vec2 vLocalXZ;
       varying vec3 vInstColor;
       void main() {
         float r = length(vLocalXZ);
-        // Ring geometry spans ~[0.68..1.0]; bright razor outer crest fading inward
-        float outerEdge = 1.0 - smoothstep(0.93, 1.0, r);
-        float innerTail = smoothstep(0.68, 0.94, r);
-        float crest = smoothstep(0.84, 0.95, r) * outerEdge;
-        vec3 baseCol = uColor * vInstColor;
-        vec3 col = mix(baseCol, vec3(1.0, 0.99, 0.94), crest * 0.55);
-        float alpha = innerTail * outerEdge * uOpacity;
+        float ang = atan(vLocalXZ.y, vLocalXZ.x);
+        // Calligraphic starburst shockwave crest with radiant notched rune rays!
+        float rays = 0.82 + 0.18 * sin(ang * 12.0 + uTime * 9.0);
+        float outerEdge = 1.0 - smoothstep(0.92, 1.0, r);
+        float innerTail = smoothstep(0.56, 0.92, r);
+        float crest = smoothstep(0.84, 0.94, r) * outerEdge;
+        float innerRune = (1.0 - smoothstep(0.015, 0.045, abs(r - 0.74))) * (0.45 + 0.55 * step(0.0, sin(ang * 16.0)));
+        vec3 baseCol = uColor * vInstColor * 1.25;
+        vec3 col = mix(baseCol, vec3(1.9, 1.82, 1.5), crest * 0.65) * rays;
+        float alpha = clamp((innerTail * outerEdge + innerRune * 0.55) * uOpacity, 0.0, 1.0);
         if (alpha < 0.01) discard;
         gl_FragColor = vec4(col, alpha);
         #include <fog_fragment>
@@ -742,7 +904,224 @@ export function createShockwaveRingMaterial(
 }
 
 /**
- * Generates a smooth radial-gradient ground contact shadow texture (zero external files).
+ * Hades-style calligraphic tapered weapon slash arc shader:
+ * razor-sharp glowing blade crest, vibrant saturated smear body, dry-brush streaks & dark ink border.
+ */
+export function createSlashArcMaterial(
+  color: THREE.ColorRepresentation = 0xff5a36,
+  opacity = 0.95,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      uColor: { value: new THREE.Color(color) },
+      uOpacity: { value: opacity },
+      uTime: SHARED_TOON_UNIFORMS.uTime,
+    },
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <fog_pars_vertex>
+      varying vec2 vUv;
+      varying vec3 vInstColor;
+      void main() {
+        vUv = uv;
+        vec3 ic = vec3(1.0);
+        #ifdef USE_INSTANCING_COLOR
+          ic = instanceColor.rgb;
+        #endif
+        vInstColor = ic;
+        #ifdef USE_INSTANCING
+          vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
+        #else
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+        #endif
+        vec4 mvPosition = viewMatrix * wp;
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      #include <common>
+      #include <fog_pars_fragment>
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      uniform float uTime;
+      varying vec2 vUv;
+      varying vec3 vInstColor;
+      void main() {
+        // vUv.x runs along arc [0..1], vUv.y runs inner [0] -> outer leading edge [1]
+        float arcTaper = sin(clamp(vUv.x, 0.0, 1.0) * 3.14159265);
+        float tipSharp = pow(arcTaper, 0.55);
+        float dryBrush = 0.65 + 0.35 * sin(vUv.x * 26.0 + vUv.y * 8.0);
+        float innerCut = smoothstep(0.18 + (1.0 - tipSharp) * 0.58, 0.68, vUv.y * dryBrush);
+        float outerCut = 1.0 - smoothstep(0.91, 1.0, vUv.y);
+        float alpha = innerCut * outerCut * tipSharp * uOpacity;
+        if (alpha < 0.02) discard;
+
+        // Crisp dark ink back-trail rim + incandescent white-hot leading blade crest!
+        float hotEdge = smoothstep(0.76, 0.93, vUv.y) * outerCut;
+        vec3 baseCol = uColor * vInstColor * 1.45;
+        vec3 col = mix(baseCol, vec3(2.1, 2.0, 1.75), hotEdge * 0.78);
+        gl_FragColor = vec4(col, alpha);
+        #include <fog_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    fog: true,
+  });
+}
+
+/**
+ * Engraved Runic Magic Circle ground decal shader for Auras, Shrines, Pylons & Lamps
+ * (replaces generic flat translucent circles with ornate glowing rotating sigils!).
+ */
+export function createRuneDiscMaterial(
+  color: THREE.ColorRepresentation = 0xffd84d,
+  opacity = 0.82,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      uBaseColor: { value: new THREE.Color(color) },
+      uEmissive: { value: new THREE.Color(color) },
+      uOpacity: { value: opacity },
+      uFillProgress: { value: 1.0 },
+      uTime: SHARED_TOON_UNIFORMS.uTime,
+    },
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <fog_pars_vertex>
+      varying vec2 vLocalXZ;
+      void main() {
+        vLocalXZ = position.xz;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vec4 mvPosition = viewMatrix * wp;
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      #include <common>
+      #include <fog_pars_fragment>
+      uniform vec3 uBaseColor;
+      uniform vec3 uEmissive;
+      uniform float uOpacity;
+      uniform float uFillProgress;
+      uniform float uTime;
+      varying vec2 vLocalXZ;
+      void main() {
+        float r = length(vLocalXZ);
+        if (r > 1.0) discard;
+        float ang = atan(vLocalXZ.y, vLocalXZ.x);
+
+        // Double engraved outer ring + rotating geometric rune ticks + inner sacred polygon
+        float outerRing = (1.0 - smoothstep(0.025, 0.055, abs(r - 0.94))) * 1.15;
+        float innerRing = (1.0 - smoothstep(0.014, 0.032, abs(r - 0.80))) * 0.75;
+        float rotAng = ang + uTime * 0.75;
+        float ticks = step(0.25, sin(rotAng * 18.0)) * smoothstep(0.80, 0.84, r) * (1.0 - smoothstep(0.90, 0.94, r));
+
+        // Subtle inscribed hexagonal star
+        float starR = 0.56 + 0.14 * cos((ang - uTime * 0.45) * 6.0);
+        float starLine = (1.0 - smoothstep(0.015, 0.035, abs(r - starR))) * 0.58;
+
+        // Soft pulsing interior energy wash weighted by fillProgress
+        float interior = (1.0 - smoothstep(0.0, 0.94, r)) * 0.22 * uFillProgress;
+        float fillRing = (1.0 - smoothstep(0.015, 0.04, abs(r - max(0.05, uFillProgress * 0.92)))) * step(0.02, uFillProgress) * step(uFillProgress, 0.99);
+
+        float pattern = clamp(outerRing + innerRing + ticks * 0.65 + starLine + interior + fillRing, 0.0, 1.35);
+        vec3 col = mix(uBaseColor, uEmissive * 1.55, 0.55);
+        col = mix(col, vec3(1.8, 1.75, 1.55), clamp(outerRing * 0.45 + fillRing * 0.6, 0.0, 0.75));
+        float alpha = clamp(pattern * uOpacity, 0.0, 0.95);
+        if (alpha < 0.015) discard;
+
+        gl_FragColor = vec4(col, alpha);
+        #include <fog_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    fog: true,
+  });
+}
+
+/**
+ * Swirling translucent wind-carved cyclone shader for Desert Tornadoes & Tornado weapon funnels
+ * (replaces opaque beige traffic cones!).
+ */
+export function createTornadoVortexMaterial(
+  color: THREE.ColorRepresentation = 0xe8b86d,
+  accent: THREE.ColorRepresentation = 0xfff0c2,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      uColor: { value: new THREE.Color(color) },
+      uAccent: { value: new THREE.Color(accent) },
+      uTime: SHARED_TOON_UNIFORMS.uTime,
+    },
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <fog_pars_vertex>
+      uniform float uTime;
+      varying vec2 vUv;
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPos;
+      void main() {
+        vUv = uv;
+        vec3 p = position;
+        // Organic whipping twist along funnel height
+        float sway = uv.y * uv.y;
+        p.x += sin(uTime * 2.8 + uv.y * 4.5) * 0.85 * sway;
+        p.z += cos(uTime * 2.4 + uv.y * 4.0) * 0.85 * sway;
+        vec4 wp = modelMatrix * vec4(p, 1.0);
+        vWorldPos = wp.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vec4 mvPosition = viewMatrix * wp;
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      #include <common>
+      #include <fog_pars_fragment>
+      uniform vec3 uColor;
+      uniform vec3 uAccent;
+      uniform float uTime;
+      varying vec2 vUv;
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPos;
+      void main() {
+        vec3 N = normalize(vWorldNormal);
+        vec3 V = normalize(cameraPosition - vWorldPos);
+        float edge = pow(1.0 - abs(dot(N, V)), 0.75);
+        float spiralA = sin(vUv.x * 18.8495 - vUv.y * 16.0 - uTime * 9.5);
+        float spiralB = sin(vUv.x * 31.4159 - vUv.y * 26.0 - uTime * 14.0 + 1.4);
+        float ribbon = smoothstep(-0.15, 0.55, spiralA * 0.65 + spiralB * 0.35);
+        float vFade = smoothstep(0.0, 0.12, vUv.y) * (1.0 - smoothstep(0.76, 1.0, vUv.y));
+        float alpha = (0.18 + ribbon * 0.52) * (0.42 + edge * 0.58) * vFade;
+        if (alpha < 0.03) discard;
+        vec3 col = mix(uColor * 0.72, uAccent * 1.15, ribbon * 0.7 + edge * 0.3);
+        gl_FragColor = vec4(col, alpha * 0.82);
+        #include <fog_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+}
+
+/**
+ * Generates a rich soft radial-gradient ground contact shadow texture (zero external files).
  */
 let cachedSoftShadowTex: THREE.DataTexture | null = null;
 export function getSoftContactShadowTexture(): THREE.DataTexture {
@@ -756,12 +1135,11 @@ export function getSoftContactShadowTexture(): THREE.DataTexture {
       const dy = (y - half) / half;
       const r = Math.hypot(dx, dy);
       const t = Math.max(0, 1 - r);
-      // Soft painterly cel-grounded disc (dense inner core + smooth feathered rim)
-      const alpha = Math.pow(t, 1.65) * 0.72 + (r < 0.58 ? 0.18 * (1 - r / 0.58) : 0);
+      const alpha = Math.pow(t, 1.55) * 0.78 + (r < 0.55 ? 0.22 * (1 - r / 0.55) : 0);
       const idx = (y * size + x) * 4;
-      data[idx] = 10;
-      data[idx + 1] = 15;
-      data[idx + 2] = 28;
+      data[idx] = 8;
+      data[idx + 1] = 8;
+      data[idx + 2] = 20;
       data[idx + 3] = Math.min(255, Math.round(alpha * 255));
     }
   }
@@ -818,9 +1196,9 @@ void main() {
 
   float camDist = length(cameraPosition - worldPos.xyz);
 
-  // Crisp subtle ink close-up, clear silhouette mid-range, smoothly faded in distance
-  float distScale = clamp(0.42 + camDist * 0.042, 0.50, 1.95);
-  float farFade = 1.0 - smoothstep(82.0, 148.0, camDist);
+  // Crisp PS1/low-poly consistent black ink outline weight
+  float distScale = clamp(0.42 + camDist * 0.032, 0.46, 1.55);
+  float farFade = 1.0 - smoothstep(88.0, 156.0, camDist);
   float finalExtrude = uThickness * uGlobalThickness * distScale * farFade * uOutlineEnabled;
 
   worldPos.xyz += worldNormal * finalExtrude;
@@ -843,10 +1221,10 @@ uniform float uOutlineEnabled;
 
 void main() {
   if (uOutlineEnabled < 0.5) discard;
-  vec3 ink = mix(uOutlineColor, uBiomeInkTint, 0.52);
+  // Crisp solid dark ink outline
+  vec3 ink = mix(uOutlineColor, uBiomeInkTint, 0.25) * 0.55;
   gl_FragColor = vec4(ink, 1.0);
   #include <fog_fragment>
-  #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
 `;
@@ -855,8 +1233,8 @@ void main() {
  * Create a BackSide inverted-hull crisp ink outline ShaderMaterial.
  */
 export function createOutlineMaterial(
-  thickness = 0.044,
-  color: THREE.ColorRepresentation = 0x0d1220,
+  thickness = 0.042,
+  color: THREE.ColorRepresentation = 0x080712,
 ): THREE.ShaderMaterial {
   const outlineColor = new THREE.Color(color);
 
@@ -879,7 +1257,7 @@ export function createOutlineMaterial(
 
 /**
  * Computes a cloned BufferGeometry with position-welded smooth averaged normals
- * specifically for seamless inverted-hull ink outlines around flat-shaded low-poly meshes.
+ * specifically for seamless inverted-hull ink outlines around stylized meshes.
  */
 export function createSmoothOutlineGeometry(source: THREE.BufferGeometry): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
@@ -936,18 +1314,13 @@ export function createSmoothOutlineGeometry(source: THREE.BufferGeometry): THREE
 }
 
 // ============================================================================
-// STYLIZED CEL SKY DOME (SMOOTH CEL CLOUDS, HORIZON SILHOUETTE, STARS & SUN/MOON)
+// MYTHIC PAINTERLY HADES SKY DOME (DRAMATIC CLOUDS, GOD RAYS, CONSTELLATIONS, ECLIPSE)
 // ============================================================================
 
-/**
- * Stylized Sky Dome gradient material with smooth 2-tone cel-shaded drifting clouds,
- * atmospheric horizon haze, distant layered mountain silhouette, twinkling stars for
- * twilight/night stages, and crisp stylized sun/moon halo.
- */
 export function createSkyDomeMaterial(
-  topColor: THREE.ColorRepresentation = 0x1686e0,
-  midColor: THREE.ColorRepresentation = 0x26b0db,
-  horizonColor: THREE.ColorRepresentation = 0x007a9e,
+  topColor: THREE.ColorRepresentation = 0x104088,
+  midColor: THREE.ColorRepresentation = 0x2692c8,
+  horizonColor: THREE.ColorRepresentation = 0x8ce2e8,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -959,6 +1332,8 @@ export function createSkyDomeMaterial(
       uTime: SHARED_TOON_UNIFORMS.uTime,
       uDarkness: { value: 0.0 },
       uNightAmount: { value: 0.0 },
+      /** 0=Forest, 1=Desert, 2=Graveyard (giant harvest moon), 3=FinalBossMap (eclipsed obsidian sun!) */
+      uBiomeMode: { value: 0.0 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
@@ -977,6 +1352,7 @@ export function createSkyDomeMaterial(
       uniform float uTime;
       uniform float uDarkness;
       uniform float uNightAmount;
+      uniform float uBiomeMode;
       varying vec3 vDir;
 
       float hash21(vec2 p) {
@@ -996,11 +1372,12 @@ export function createSkyDomeMaterial(
         return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
       }
 
-      float cloudFbm(vec2 p) {
+      float fbm(vec2 p) {
         float v = 0.0;
-        v += smoothNoise(p) * 0.56;
-        v += smoothNoise(p * 2.12 + vec2(3.7, 1.9)) * 0.28;
-        v += smoothNoise(p * 4.35 - vec2(2.1, 4.3)) * 0.16;
+        v += smoothNoise(p) * 0.50;
+        v += smoothNoise(p * 2.07 + vec2(3.7, 1.9)) * 0.27;
+        v += smoothNoise(p * 4.21 - vec2(2.1, 4.3)) * 0.14;
+        v += smoothNoise(p * 8.17 + vec2(6.4, -1.7)) * 0.09;
         return v;
       }
 
@@ -1008,78 +1385,145 @@ export function createSkyDomeMaterial(
         vec3 d = normalize(vDir);
         float h = clamp(d.y, 0.0, 1.0);
         float lightKeep = clamp(1.0 - uDarkness, 0.0, 1.0);
+        vec3 sunDir = normalize(uSunDir);
+        float sunDot = max(dot(d, sunDir), 0.0);
 
-        // Rich atmospheric multi-stop sky gradient
-        vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.30, h));
-        col = mix(col, uTopColor, smoothstep(0.24, 0.84, h));
+        // 1. Rich painterly 3-stop mythic sky gradient + sunward scattering warmth
+        vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.28, h));
+        col = mix(col, uTopColor, smoothstep(0.22, 0.82, h));
 
-        // Subtle warm atmospheric horizon bloom band
-        float horizonGlow = exp(-abs(d.y) * 9.5) * lightKeep;
-        col += mix(uHorizonColor, uSunColor, 0.45) * horizonGlow * 0.24;
+        // Atmospheric horizon mist & golden-hour directional scattering
+        float horizonBand = exp(-abs(d.y - 0.02) * 8.5) * lightKeep;
+        vec3 scatterCol = mix(uHorizonColor, uSunColor, 0.42 + 0.35 * pow(sunDot, 2.0));
+        col += scatterCol * horizonBand * 0.32;
 
-        // Crisp twinkling starfield on Twilight, Graveyard & FinalBoss stages!
-        if (uNightAmount > 0.05 && d.y > 0.04 && lightKeep > 0.05) {
-          vec2 starUv = d.xz / (d.y + 0.45) * 48.0;
-          vec2 cell = floor(starUv);
-          vec2 f = fract(starUv) - 0.5;
+        // 2. Subtle cosmic nebula / aurora veil & refined natural starfield on night/twilight stages (ZERO grid dots!)
+        if (uNightAmount > 0.08 && d.y > 0.02 && lightKeep > 0.05) {
+          vec2 skyPlane = d.xz / (d.y + 0.38);
+          // Painterly cosmic nebula band
+          float nebA = fbm(skyPlane * 1.15 + vec2(0.4, uTime * 0.004));
+          float nebB = fbm(skyPlane * 2.4 - vec2(1.8, -0.7));
+          float nebulaMask = smoothstep(0.46, 0.82, nebA * 0.65 + nebB * 0.35) * smoothstep(0.06, 0.38, d.y);
+          vec3 nebCol = uBiomeMode > 2.5
+            ? mix(vec3(0.55, 0.12, 0.34), vec3(0.95, 0.48, 0.18), nebB)
+            : mix(vec3(0.28, 0.18, 0.58), vec3(0.45, 0.72, 0.95), nebB);
+          col += nebCol * nebulaMask * uNightAmount * 0.36 * lightKeep;
+
+          // Delicate varied-scale pinpoint constellations with jittered positions (NEVER uniform dots!)
+          vec2 starGrid = skyPlane * 34.0;
+          vec2 cell = floor(starGrid);
+          vec2 local = fract(starGrid);
           float rnd = hash21(cell);
-          if (rnd > 0.955) {
-            float twinkle = 0.6 + 0.4 * sin(uTime * (2.5 + rnd * 6.0) + rnd * 40.0);
-            float starDot = 1.0 - smoothstep(0.08, 0.24, length(f));
-            float starFade = smoothstep(0.06, 0.30, d.y);
-            col += vec3(0.95, 0.97, 1.0) * starDot * twinkle * starFade * uNightAmount * lightKeep * 0.9;
+          if (rnd > 0.945) {
+            vec2 jitter = vec2(hash21(cell + 13.7), hash21(cell + 47.2)) * 0.68 + 0.16;
+            float dist = length(local - jitter);
+            float mag = pow((rnd - 0.945) / 0.055, 1.5);
+            float radius = mix(0.035, 0.095, mag);
+            float starCore = 1.0 - smoothstep(radius * 0.25, radius, dist);
+            float twinkle = 0.68 + 0.32 * sin(uTime * (1.8 + rnd * 4.5) + rnd * 55.0);
+            float starFade = smoothstep(0.08, 0.34, d.y);
+            vec3 starCol = mix(vec3(0.85, 0.92, 1.0), vec3(1.0, 0.92, 0.78), hash21(cell + 91.1));
+            col += starCol * starCore * (0.35 + 0.75 * mag) * twinkle * starFade * uNightAmount * lightKeep;
           }
         }
 
-        // Smooth stylized 2-tone cel-shaded drifting clouds (ZERO jagged stair-step artifacts!)
-        if (d.y > 0.05 && lightKeep > 0.05) {
-          vec2 uv1 = d.xz / (d.y + 0.36) * 0.95;
-          uv1.x += uTime * 0.011;
-          uv1.y += uTime * 0.004;
-          float c1 = cloudFbm(uv1);
-          float cShadow = cloudFbm(uv1 + vec2(0.14, 0.09));
+        // 3. Stylized Celestial Centerpiece (clean warm desert sun, cratered harvest moon, crimson volcanic boss sky!)
+        vec3 sunRight = normalize(cross(vec3(0.0, 1.0, 0.0), sunDir));
+        vec3 sunUp = cross(sunDir, sunRight);
+        vec2 sunLocal = vec2(dot(d, sunRight), dot(d, sunUp));
 
-          float horizonFade = smoothstep(0.06, 0.26, d.y) * (1.0 - smoothstep(0.72, 0.96, d.y));
-          float cloudAlpha = smoothstep(0.54, 0.60, c1) * horizonFade;
-          float litBand = smoothstep(0.58, 0.65, c1 - (cShadow - c1) * 0.45);
-
-          vec3 cloudShadowCol = mix(uMidColor, uHorizonColor, 0.5) * 0.86 + vec3(0.14, 0.16, 0.22);
-          vec3 cloudLitCol = mix(vec3(0.96, 0.98, 1.0), uSunColor, 0.34);
-          // Slightly moodier clouds at night/twilight
-          cloudLitCol = mix(cloudLitCol, mix(uMidColor, uSunColor, 0.45) * 1.15, uNightAmount * 0.55);
-          vec3 cloudCol = mix(cloudShadowCol, cloudLitCol, litBand);
-
-          col = mix(col, cloudCol, cloudAlpha * (0.72 - uNightAmount * 0.25) * lightKeep);
+        if (uBiomeMode > 2.5) {
+          // FINAL BOSS SKY: Blazing scarlet-crimson sky with swirling dark volcanic cloud bands!
+          float corona = pow(sunDot, 10.0) * 0.42 + pow(sunDot, 36.0) * 0.62;
+          float eclipseCore = smoothstep(0.985, 0.990, sunDot);
+          col += vec3(1.25, 0.34, 0.12) * corona * lightKeep;
+          col = mix(col, vec3(0.18, 0.02, 0.03), eclipseCore * 0.85 * lightKeep);
+        } else if (uBiomeMode > 1.5 && uBiomeMode < 2.5) {
+          // GRAVEYARD: Giant pale silver-violet Harvest Moon!
+          float moonHalo = pow(sunDot, 12.0) * 0.28 + pow(sunDot, 38.0) * 0.36;
+          float moonDisc = smoothstep(0.980, 0.984, sunDot) * lightKeep;
+          float crater = fbm(sunLocal * 20.0 + vec2(2.4, -1.1));
+          vec3 moonSurf = mix(vec3(0.78, 0.76, 0.92), vec3(1.06, 1.04, 1.12), smoothstep(0.36, 0.66, crater));
+          col += vec3(0.68, 0.58, 0.95) * moonHalo * lightKeep;
+          col = mix(col, moonSurf, moonDisc);
+        } else if (uBiomeMode > 0.5 && uBiomeMode < 1.5) {
+          // DESERT: Large warm pale sunlit desert disc glowing softly through golden haze!
+          float wideGlow = pow(sunDot, 4.0) * 0.26 * lightKeep;
+          float sunHalo = pow(sunDot, 18.0) * 0.44 * lightKeep;
+          float sunDisc = smoothstep(0.986, 0.990, sunDot) * lightKeep;
+          col += uSunColor * (wideGlow + sunHalo);
+          col = mix(col, vec3(1.18, 1.14, 0.98), sunDisc);
+        } else {
+          // FOREST: Clean atmospheric sun glow
+          float sunHalo = pow(sunDot, 18.0) * 0.30 * lightKeep;
+          float sunDisc = smoothstep(0.992, 0.9945, sunDot) * lightKeep;
+          col += uSunColor * sunHalo;
+          col = mix(col, vec3(1.18, 1.14, 0.98), sunDisc);
         }
 
-        // Stylized crisp sun/moon disc + multi-tier atmospheric halo
-        vec3 sunDir = normalize(uSunDir);
-        float sunDot = max(dot(d, sunDir), 0.0);
-        float wideGlow = pow(sunDot, 5.0) * 0.18 * lightKeep;
-        float sunHalo = pow(sunDot, 22.0) * 0.38 * lightKeep;
-        float sunRing = smoothstep(0.986, 0.991, sunDot) * (1.0 - smoothstep(0.994, 0.997, sunDot)) * 0.28 * lightKeep;
-        float sunDisc = smoothstep(0.9942, 0.9958, sunDot) * lightKeep;
-        col += uSunColor * (wideGlow + sunHalo + sunRing);
-        col = mix(col, vec3(1.0, 0.99, 0.93), sunDisc);
+        // 4. Bold Stylized Painterly Flat-Cel Cloud Cutouts (crisp graphic sky silhouettes!)
+        if (d.y > 0.025 && lightKeep > 0.05) {
+          vec2 uvC = d.xz / (d.y + 0.32) * 0.72;
+          uvC.x += uTime * 0.008;
+          uvC.y += uTime * 0.0025;
+          float cShape = fbm(uvC);
+          float cDetail = fbm(uvC * 2.1 + vec2(4.2, -2.7));
+          float cloudDensity = cShape * 0.74 + cDetail * 0.26;
 
-        // Distant layered horizon mountain / mesa / citadel ridge silhouette for world depth!
-        if (d.y < 0.16) {
+          float elevFade = smoothstep(0.03, 0.16, d.y) * (1.0 - smoothstep(0.72, 0.96, d.y));
+          // Crisp graphic cel-cutout cloud edges!
+          float cloudBandA = smoothstep(0.48, 0.515, cloudDensity) * elevFade;
+          float cloudBandB = smoothstep(0.57, 0.605, cloudDensity) * elevFade;
+
+          vec3 cloudColA;
+          vec3 cloudColB;
+          if (uBiomeMode > 2.5) {
+            // Blazing dark-crimson swirling storm clouds over red boss sky!
+            cloudColA = vec3(0.46, 0.06, 0.06);
+            cloudColB = vec3(0.28, 0.03, 0.04);
+          } else if (uBiomeMode > 0.5 && uBiomeMode < 1.5) {
+            // Warm cream-peach desert clouds
+            cloudColA = mix(uMidColor, vec3(1.0, 0.95, 0.80), 0.45);
+            cloudColB = mix(uHorizonColor, vec3(1.0, 0.98, 0.88), 0.62);
+          } else {
+            // Crisp cyan-teal / violet layered stylized sky clouds
+            cloudColA = mix(uMidColor, uHorizonColor, 0.52);
+            cloudColB = mix(uHorizonColor, vec3(0.86, 0.95, 0.98), 0.42 - uNightAmount * 0.28);
+          }
+          col = mix(col, cloudColA, cloudBandA * (uBiomeMode > 2.5 ? 0.72 : 0.62) * lightKeep);
+          col = mix(col, cloudColB, cloudBandB * (uBiomeMode > 2.5 ? 0.76 : 0.68) * lightKeep);
+        }
+
+        // 5. Atmospheric Smooth Distant Mountain/Hill Horizon Silhouettes!
+        if (d.y < 0.22) {
           float az = atan(d.z, d.x);
-          float ridgeFar = 0.048 + sin(az * 5.0 + 0.7) * 0.022 + sin(az * 11.0 - 1.2) * 0.012 + cos(az * 19.0) * 0.006;
-          float ridgeNear = 0.026 + cos(az * 7.0 + 2.1) * 0.015 + sin(az * 15.0 + 0.4) * 0.008;
-          float farMask = 1.0 - smoothstep(ridgeFar - 0.004, ridgeFar + 0.004, d.y);
-          float nearMask = 1.0 - smoothstep(ridgeNear - 0.003, ridgeNear + 0.003, d.y);
-          vec3 farCol = mix(uHorizonColor, uTopColor, 0.28) * 0.78;
-          vec3 nearCol = mix(uHorizonColor, uTopColor, 0.42) * 0.62;
-          col = mix(col, farCol, farMask * 0.42 * lightKeep);
-          col = mix(col, nearCol, nearMask * 0.56 * lightKeep);
+          float ridgeFar;
+          float ridgeNear;
+          if (uBiomeMode > 2.5) {
+            ridgeFar = 0.062 + pow(abs(sin(az * 7.0 + 0.5)), 2.5) * 0.055 + sin(az * 17.0) * 0.012;
+            ridgeNear = 0.034 + pow(abs(cos(az * 11.0 - 0.8)), 3.0) * 0.038;
+          } else if (uBiomeMode > 0.5 && uBiomeMode < 1.5) {
+            float mesa = floor((sin(az * 5.0 + 0.4) * 0.5 + 0.5) * 3.0) * 0.022;
+            ridgeFar = 0.036 + mesa + sin(az * 9.0) * 0.012;
+            ridgeNear = 0.022 + sin(az * 10.0 + 1.3) * 0.012;
+          } else {
+            // Sweeping atmospheric distant hills (matches iconic teal & violet forested horizons!)
+            ridgeFar = 0.072 + sin(az * 4.0 + 0.7) * 0.036 + sin(az * 9.0 - 1.2) * 0.018;
+            ridgeNear = 0.038 + cos(az * 7.0 + 2.1) * 0.022 + sin(az * 13.0 + 0.4) * 0.010;
+          }
+
+          float farMask = 1.0 - smoothstep(ridgeFar - 0.005, ridgeFar + 0.005, d.y);
+          float nearMask = 1.0 - smoothstep(ridgeNear - 0.004, ridgeNear + 0.004, d.y);
+          vec3 farCol = mix(uHorizonColor, uTopColor, 0.58) * 0.62;
+          vec3 nearCol = mix(uHorizonColor, uTopColor, 0.74) * 0.42;
+          col = mix(col, farCol, farMask * 0.72 * lightKeep);
+          col = mix(col, nearCol, nearMask * 0.82 * lightKeep);
         }
 
         // Smooth darkness veil for Big Bob Darkness / Blind challenge
-        col = mix(col, vec3(0.018, 0.014, 0.032), clamp(uDarkness * 0.92, 0.0, 0.95));
+        col = mix(col, vec3(0.015, 0.011, 0.028), clamp(uDarkness * 0.94, 0.0, 0.96));
 
         gl_FragColor = vec4(col, 1.0);
-        #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }
     `,

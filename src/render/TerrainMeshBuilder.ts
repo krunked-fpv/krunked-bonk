@@ -30,18 +30,29 @@ import {
   createMkToonMaterial,
   createOutlineMaterial,
   createSmoothOutlineGeometry,
+  createTornadoVortexMaterial,
   getSoftContactShadowTexture,
   setMkToonTexture,
 } from './toonShader';
+import { createCraggySpireGeometry } from '../assets/SculptedMeshes';
 
-const GRASS_CAPACITY = 9000;
+const GRASS_CAPACITY = 11500;
 const GRASS_COUNTS: Record<GrassQuality, number> = {
-  low: 1600,
-  med: 4600,
+  low: 2200,
+  med: 5800,
   high: GRASS_CAPACITY,
 };
-const AMBIENT_MOTE_COUNT = 160;
+const AMBIENT_MOTE_COUNT = 180;
 const DESERT_TORNADO_COUNT = 3;
+
+export interface BrazierLightPoint {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+  g: number;
+  b: number;
+}
 
 function createLocalRng(seed: number): () => number {
   let state = (seed ^ 0x9e3779b9) >>> 0;
@@ -58,8 +69,8 @@ function createLocalRng(seed: number): () => number {
  * so grass curves softly in the breeze and blends seamlessly at the ground root.
  */
 function createGrassTuftGeometry(): THREE.BufferGeometry {
-  const bladeCount = 5;
-  const trisPerBlade = 3; // lower quad (2 tris) + curved tip (1 tri)
+  const bladeCount = 6;
+  const trisPerBlade = 3; // lower quad (2 tris) + gracefully arched tip (1 tri)
   const vertsPerBlade = trisPerBlade * 3;
   const totalVerts = bladeCount * vertsPerBlade;
 
@@ -68,9 +79,9 @@ function createGrassTuftGeometry(): THREE.BufferGeometry {
   const uvs = new Float32Array(totalVerts * 2);
   const colors = new Float32Array(totalVerts * 3);
 
-  const rootCol = new THREE.Color(0x9ea89e);
-  const midCol = new THREE.Color(0xd8e0d8);
-  const tipCol = new THREE.Color(0xffffff);
+  const rootCol = new THREE.Color(0x4a5950);
+  const midCol = new THREE.Color(0xa6b59f);
+  const tipCol = new THREE.Color(0xf0f7e0);
 
   let vi = 0;
   const pushV = (x: number, y: number, z: number, u: number, v: number, c: THREE.Color) => {
@@ -89,19 +100,18 @@ function createGrassTuftGeometry(): THREE.BufferGeometry {
   };
 
   for (let b = 0; b < bladeCount; b++) {
-    const angle = (b / bladeCount) * Math.PI * 2 + (b % 2 === 1 ? 0.28 : 0);
+    const angle = (b / bladeCount) * Math.PI * 2 + (b % 2 === 1 ? 0.34 : 0);
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    const halfW = 0.145;
-    const midW = 0.085;
-    const h = 0.56 + (b % 3) * 0.14;
-    const hMid = h * 0.56;
-    const leanMid = 0.09;
-    const leanTip = 0.28;
+    const halfW = 0.095;
+    const midW = 0.055;
+    const h = 0.38 + (b % 3) * 0.09;
+    const hMid = h * 0.58;
+    const leanMid = 0.11;
+    const leanTip = 0.30;
 
-    const bx = cos * 0.14;
-    const bz = sin * 0.14;
-    // Perpendicular blade width axis
+    const bx = cos * 0.11;
+    const bz = sin * 0.11;
     const px = -sin;
     const pz = cos;
 
@@ -204,41 +214,41 @@ function getTerrainPalette(mapId: MapId, tier: MapTier): TerrainColorPalette {
         tornadoColor: 0xc94a36,
       };
     }
-    // StageDesert1: Crusty Desert (warm golden dunes!)
+    // StageDesert1: Sun-bleached dusty peach-ochre sand dunes!
     return {
-      flatLow: 0xd99642,
-      flatMid: 0xf2c26b,
-      flatHigh: 0xffe49e,
-      slopeRim: 0xc47735,
-      cliffLow: 0x99522e,
-      cliffHigh: 0xb86d3b,
-      aoTint: 0x5e342f,
+      flatLow: 0xc29258,
+      flatMid: 0xd6a66a,
+      flatHigh: 0xe6be84,
+      slopeRim: 0xb08048,
+      cliffLow: 0x8c633b,
+      cliffHigh: 0xb58858,
+      aoTint: 0x5c3e26,
       detailTexture: 'terrain_desert',
       cliffTexture: 'desert_sandstone',
-      grassRoot: 0x8c7b32,
-      grassTip: 0xd6c058,
-      grassDensityScale: 0.3,
+      grassRoot: 0x6e5e38,
+      grassTip: 0xb39a5c,
+      grassDensityScale: 0.08,
       showGrass: true,
-      dustColor: 0xffe09c,
-      tornadoColor: 0xe6b566,
+      dustColor: 0xf7dca0,
+      tornadoColor: 0xd9a259,
     };
   }
 
   if (mapId === 'Graveyard') {
-    // StageGraveyard: Haunted violet 19x19 flagstone & mist grass!
+    // StageGraveyard: Haunted violet 19x19 flagstone & moody slate turf!
     return {
-      flatLow: 0x3a3754,
-      flatMid: 0x4c486b,
-      flatHigh: 0x625d82,
-      slopeRim: 0x4e4369,
-      cliffLow: 0x29263d,
-      cliffHigh: 0x433e5e,
-      aoTint: 0x191529,
+      flatLow: 0x2d2c47,
+      flatMid: 0x3e3c5e,
+      flatHigh: 0x524f78,
+      slopeRim: 0x3d385c,
+      cliffLow: 0x222038,
+      cliffHigh: 0x393657,
+      aoTint: 0x141224,
       detailTexture: 'terrain_graveyard',
       cliffTexture: 'graveyard_cobble',
-      grassRoot: 0x3f2e66,
-      grassTip: 0x8b70bf,
-      grassDensityScale: 0.65,
+      grassRoot: 0x2d244a,
+      grassTip: 0x64548f,
+      grassDensityScale: 0.25,
       showGrass: true,
       dustColor: 0xb299e6,
       tornadoColor: 0x8b6ec4,
@@ -246,83 +256,83 @@ function getTerrainPalette(mapId: MapId, tier: MapTier): TerrainColorPalette {
   }
 
   if (mapId === 'FinalBossMap') {
-    // FinalBossMap: Circular Obsidian & Gold-Trimmed Colosseum!
+    // FinalBossMap: Weathered stepped sandstone/volcanic stone battle arena under crimson boss sky!
     return {
-      flatLow: 0x221a30,
-      flatMid: 0x312645,
-      flatHigh: 0x42335c,
-      slopeRim: 0x6b2852,
-      cliffLow: 0x161021,
-      cliffHigh: 0x291e3d,
-      aoTint: 0x10081a,
+      flatLow: 0x99653c,
+      flatMid: 0xb87e4a,
+      flatHigh: 0xd49a5d,
+      slopeRim: 0x80422b,
+      cliffLow: 0x54261f,
+      cliffHigh: 0x78392a,
+      aoTint: 0x301212,
       detailTexture: 'terrain_citadel',
-      cliffTexture: 'citadel_obsidian',
+      cliffTexture: 'desert_sandstone',
       grassRoot: 0x421c5e,
       grassTip: 0xb938ff,
       grassDensityScale: 0,
       showGrass: false,
-      dustColor: 0xffb703,
+      dustColor: 0xff9b42,
       tornadoColor: 0xff4d2e,
     };
   }
 
-  // Forest T2 (Deep Forest — indigo-purple twilight) & T3 (Cursed Forest — crimson-ash)
+  // Forest T2 (Deep Twilight Woods — atmospheric indigo-slate mossy grass!) & T3 (Cursed Crimson-Ash)
   if (tier === 2) {
     return {
-      flatLow: 0x2e5766,
-      flatMid: 0x447a80,
-      flatHigh: 0x629994,
-      slopeRim: 0x4d467a,
-      cliffLow: 0x2e2854,
-      cliffHigh: 0x494078,
-      aoTint: 0x1d173d,
+      flatLow: 0x273452,
+      flatMid: 0x36486b,
+      flatHigh: 0x485e87,
+      slopeRim: 0x3a3b61,
+      cliffLow: 0x282b47,
+      cliffHigh: 0x42476b,
+      aoTint: 0x171b33,
       detailTexture: 'terrain_grass',
       cliffTexture: 'terrain_cliff',
-      grassRoot: 0x344a75,
-      grassTip: 0x8a82e0,
-      grassDensityScale: 0.9,
+      grassRoot: 0x263252,
+      grassTip: 0x566996,
+      grassDensityScale: 0.28,
       showGrass: true,
-      dustColor: 0x9c82e0,
+      dustColor: 0x9c8ce0,
       tornadoColor: 0x6b56b3,
     };
   }
   if (tier === 3) {
     return {
-      flatLow: 0x5c2b26,
-      flatMid: 0x803e30,
-      flatHigh: 0xa65338,
-      slopeRim: 0x522629,
-      cliffLow: 0x2e171a,
-      cliffHigh: 0x4d2629,
-      aoTint: 0x1c0b0e,
+      flatLow: 0x5c2f26,
+      flatMid: 0x7d4232,
+      flatHigh: 0x9e563b,
+      slopeRim: 0x522624,
+      cliffLow: 0x331b1a,
+      cliffHigh: 0x522c28,
+      aoTint: 0x1f0d0e,
       detailTexture: 'terrain_grass',
       cliffTexture: 'terrain_cliff',
-      grassRoot: 0x5e2320,
-      grassTip: 0xd95838,
-      grassDensityScale: 0.78,
+      grassRoot: 0x542620,
+      grassTip: 0xb85236,
+      grassDensityScale: 0.24,
       showGrass: true,
-      dustColor: 0xff6b3d,
+      dustColor: 0xff7547,
       tornadoColor: 0xb83226,
     };
   }
 
-  // Flagship StageForest1: Lush sunlit emerald-lime plateaus & slate cliffs!
+  // Flagship StageForest1: Cohesive Earthy Valheim Olive-Moss Forest Turf & Weathered Grey Stone Cliffs!
   return {
-    flatLow: 0x45ad46,
-    flatMid: 0x6fd145,
-    flatHigh: 0x9ce352,
-    slopeRim: 0x5a9163,
-    cliffLow: 0x526b7a,
-    cliffHigh: 0x7993a3,
-    aoTint: 0x243b57,
+    flatLow: 0x355025,
+    flatMid: 0x496b2d,
+    flatHigh: 0x608538,
+    slopeRim: 0x4f634b,
+    cliffLow: 0x576168,
+    cliffHigh: 0x7b858c,
+    aoTint: 0x213022,
     detailTexture: 'terrain_grass',
     cliffTexture: 'terrain_cliff',
-    grassRoot: 0x2b823f,
-    grassTip: 0xc5f759,
-    grassDensityScale: 1.0,
+    grassRoot: 0x2b451f,
+    grassTip: 0x5c8236,
+    grassDensityScale: 0.28,
     showGrass: true,
-    dustColor: 0xd8ff99,
-    tornadoColor: 0x88e882,
+    dustColor: 0xe6f2c2,
+    tornadoColor: 0x88b872,
   };
 }
 
@@ -347,10 +357,12 @@ export class TerrainMeshBuilder {
   private magmaRimMat: THREE.ShaderMaterial | null = null;
   private jumpPadRings: THREE.Mesh[] = [];
 
-  // Ambient floating biome particles (Forest pollen/fireflies/embers, Desert dust, Graveyard wisps, Citadel sparks)
+  // Ambient floating biome particles & flickering sanctuary braziers (ZERO per-frame allocs!)
   private ambientMotesMesh: THREE.InstancedMesh | null = null;
   private readonly ambientMoteSeed = new Float32Array(AMBIENT_MOTE_COUNT * 4);
   private readonly desertTornadoes: DesertTornadoRig[] = [];
+  private readonly brazierLights: BrazierLightPoint[] = [];
+  private readonly brazierFlames: THREE.Mesh[] = [];
   private currentSeed = 1;
   private currentGrassMaxPlaced = 0;
 
@@ -432,10 +444,32 @@ export class TerrainMeshBuilder {
 
     this.buildTerrainSurface(mapId, terrain, palette, seed);
     this.buildBoundaryEnvironment(mapId, terrain, palette, rng);
+    // Keep Sanctuary Braziers strictly for FinalBossMap & Graveyard — Forest & Desert stay pure open Valheim/wilderness!
+    if (mapId === 'FinalBossMap' || mapId === 'Graveyard') {
+      this.buildSanctuaryBraziers(mapId, mapTier, terrain);
+    }
     this.buildProceduralProps(mapId, mapTier, terrain, rng);
     this.buildWindGrass(terrain, palette, rng, grassQuality);
-    this.buildBiomeWildflowers(mapId, mapTier, terrain, rng);
     this.buildAmbientAtmosphere(mapId, mapTier, terrain, palette, rng);
+  }
+
+  /**
+   * Returns the nearest glowing sanctuary brazier for real-time warm firelight illumination.
+   */
+  public getNearestBrazier(x: number, z: number): BrazierLightPoint | null {
+    let best: BrazierLightPoint | null = null;
+    let bestSq = 28 * 28;
+    for (let i = 0; i < this.brazierLights.length; i++) {
+      const b = this.brazierLights[i]!;
+      const dx = b.x - x;
+      const dz = b.z - z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestSq) {
+        bestSq = dSq;
+        best = b;
+      }
+    }
+    return best;
   }
 
   public setGrassQuality(quality: GrassQuality): void {
@@ -531,10 +565,16 @@ export class TerrainMeshBuilder {
       ring.scale.set(s, s, 1);
     }
 
-    // 2. FinalBossMap glowing magma/void chasm rim pulse
+    // 2. FinalBossMap glowing magma/void chasm rim pulse & flickering Sanctuary Brazier flames!
     if (this.magmaRimMat) {
       const uInt = this.magmaRimMat.uniforms.uEmissiveIntensity;
-      if (uInt) uInt.value = 0.88 + Math.sin(timeSec * 2.6) * 0.18;
+      if (uInt) uInt.value = 1.42 + Math.sin(timeSec * 2.8) * 0.24;
+    }
+    for (let i = 0; i < this.brazierFlames.length; i++) {
+      const fl = this.brazierFlames[i]!;
+      const flicker = 0.88 + Math.sin(timeSec * 11.5 + i * 2.1) * 0.14 + Math.cos(timeSec * 17.3 + i) * 0.08;
+      fl.scale.set(0.92 + Math.sin(timeSec * 8.4 + i) * 0.1, flicker * 1.15, 0.92 + Math.cos(timeSec * 7.8 + i) * 0.1);
+      fl.rotation.y = timeSec * 1.8 + i;
     }
 
     // 3. All-Biome Ambient Atmospheric Particles (pollen/fireflies/embers/sand/soul-wisps!)
@@ -767,23 +807,13 @@ export class TerrainMeshBuilder {
           }
           tmpCol.multiplyScalar(0.95 + cellHash * 0.09);
         } else if (mapId === 'FinalBossMap') {
-          // Dramatic circular Obsidian & Gold-Trimmed Colosseum inlay rings + glowing rim!
+          // Clean smooth obsidian-violet colosseum floor — ALL razor-sharp gold rings & 11 spokes are rendered analytically in MK_TERRAIN_FRAGMENT_SHADER (ZERO jagged triangles!)
           const r = Math.hypot(avgX, avgZ);
-          const goldRing =
-            Math.abs(r - 22) < 1.8 ||
-            Math.abs(r - 48) < 1.6 ||
-            Math.abs(r - 76) < 1.8 ||
-            Math.abs(r - (arenaR - 4)) < 2.2;
-          if (goldRing) {
-            tmpCol.lerp(colGoldTrim, 0.78);
-          } else if (r > arenaR - 1) {
-            tmpCol.lerp(colMagmaEdge, 0.75);
+          if (r > arenaR - 1.2) {
+            tmpCol.lerp(colMagmaEdge, 0.65);
           } else {
-            // Radial colosseum obsidian spoke mosaic
-            const ang = Math.atan2(avgZ, avgX);
-            const spoke = Math.abs(Math.sin(ang * 11)) < 0.08 && r > 18 && r < arenaR - 6;
-            if (spoke) tmpCol.lerp(colGoldTrim, 0.32);
-            tmpCol.multiplyScalar(0.94 + cellHash * 0.1);
+            const radialTone = 0.94 + Math.min(0.14, (r / Math.max(1, arenaR)) * 0.12);
+            tmpCol.multiplyScalar(radialTone);
           }
         } else {
           tmpCol.multiplyScalar(0.95 + cellHash * 0.1);
@@ -912,22 +942,22 @@ export class TerrainMeshBuilder {
       });
       this.magmaRimMat = rimMat;
       const rimMesh = new THREE.Mesh(rimGeo, rimMat);
-      rimMesh.position.y = 0.8;
+      rimMesh.position.y = -0.35;
       this.staticGroup.add(rimMesh);
       this.disposableGeometries.push(rimGeo);
       this.disposableMaterials.push(rimMat);
 
-      // Symmetrical Colosseum Perimeter Obsidian-Gold Obelisks (22 around rim!)
+      // Symmetrical Colosseum Perimeter Obsidian-Bronze Monoliths (22 around rim!)
       const pillarPair = this.assets.builtIn.getPropGeometryPair('citadel_pillar');
       const pillarMat = createMkToonMaterial({
         color: 0xffffff,
         map: this.assets.getTexture(pillarPair.textureKey),
-        mapStrength: 0.52,
+        mapStrength: 0.80,
         vertexColors: true,
         emissive: pillarPair.emissiveHex ?? 0x000000,
-        emissiveIntensity: pillarPair.emissiveIntensity ?? 0.35,
-        rimStrength: 0.42,
-        rimColor: 0xffd23f,
+        emissiveIntensity: pillarPair.emissiveIntensity ?? 0.10,
+        rimStrength: 0.24,
+        rimColor: 0xffb84d,
       });
       const pillarOutMat = createOutlineMaterial(pillarPair.outlineThickness, 0x08060e);
       const pCount = 22;
@@ -957,39 +987,222 @@ export class TerrainMeshBuilder {
       return;
     }
 
-    // Perimeter cliffs / sandstone mesas / graveyard wall crags
+    // Broad rolling weathered boundary cliff ridges & rounded foothills (clean natural skyline!)
     const count = 48;
-    const radius = terrain.arenaRadius + 4.5;
-    const geo = new THREE.DodecahedronGeometry(6.5, 0);
+    const radius = terrain.arenaRadius + 7.5;
+    const geoA = createCraggySpireGeometry(11.5, 11.2, 19, 0.72);
+    const geoOutA = createSmoothOutlineGeometry(geoA);
     const mat = createMkToonMaterial({
       color: palette.cliffHigh,
       map: this.assets.getTexture(palette.cliffTexture),
-      mapStrength: 0.55,
-      rimStrength: 0.2,
+      mapStrength: 0.82,
+      rimStrength: 0.14,
       flatShading: true,
+      hatchStrength: 0.0,
     });
-    const inst = new THREE.InstancedMesh(geo, mat, count);
+    const outMat = createOutlineMaterial(0.06, 0x10131a);
+    const inst = new THREE.InstancedMesh(geoA, mat, count);
+    const instOut = new THREE.InstancedMesh(geoOutA, outMat, count);
     const dummy = new THREE.Object3D();
 
     for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2 + (rng() - 0.5) * 0.08;
-      const r = radius + (rng() - 0.3) * 6;
+      const angle = (i / count) * Math.PI * 2 + (rng() - 0.5) * 0.06;
+      const r = radius + (rng() - 0.25) * 7.5;
       const x = Math.cos(angle) * r;
       const z = Math.sin(angle) * r;
       const s = terrain.sample(
         Math.cos(angle) * (terrain.arenaRadius - 2),
         Math.sin(angle) * (terrain.arenaRadius - 2),
       );
-      dummy.position.set(x, s.height + 1.5 + rng() * 3.5, z);
-      dummy.rotation.set((rng() - 0.5) * 0.3, rng() * Math.PI * 2, (rng() - 0.5) * 0.3);
-      dummy.scale.set(1.2 + rng() * 1.1, 1.3 + rng() * 1.4, 1.2 + rng() * 0.9);
+      dummy.position.set(x, s.height - 3.2, z);
+      dummy.rotation.set((rng() - 0.5) * 0.10, rng() * Math.PI * 2, (rng() - 0.5) * 0.10);
+      const sx = 1.15 + rng() * 1.15;
+      const sy = (i % 3 === 0 ? 0.85 : 0.48) + rng() * 0.42;
+      dummy.scale.set(sx, sy, sx * (0.85 + rng() * 0.35));
       dummy.updateMatrix();
       inst.setMatrixAt(i, dummy.matrix);
+      instOut.setMatrixAt(i, dummy.matrix);
     }
     inst.instanceMatrix.needsUpdate = true;
-    this.staticGroup.add(inst);
-    this.disposableGeometries.push(geo);
-    this.disposableMaterials.push(mat);
+    instOut.instanceMatrix.needsUpdate = true;
+    inst.frustumCulled = false;
+    instOut.frustumCulled = false;
+    this.staticGroup.add(inst, instOut);
+    this.disposableGeometries.push(geoA, geoOutA);
+    this.disposableMaterials.push(mat, outMat);
+  }
+
+  /**
+   * Places Hades-inspired flickering bronze & stone Sanctuary Braziers around spawn & cardinal vistas,
+   * creating rich warm firelight landmarks & focal framing on the Title Screen and in every biome!
+   */
+  private buildSanctuaryBraziers(
+    mapId: MapId,
+    mapTier: MapTier,
+    terrain: ITerrainSampler,
+  ): void {
+    const spawn = terrain.getSpawnPoint();
+    const isGrave = mapId === 'Graveyard';
+    const isCitadel = mapId === 'FinalBossMap';
+    const isDesert = mapId === 'Desert';
+
+    const flameHex = isGrave
+      ? 0xb95cff
+      : isCitadel
+        ? 0xff4d1f
+        : mapId === 'Forest' && mapTier === 2
+          ? 0x5cf7ff
+          : 0xff7b1f;
+    const coreHex = isGrave ? 0xe9d5ff : 0xfff3a8;
+    const lightRgb: [number, number, number] = isGrave
+      ? [0.72, 0.35, 1.0]
+      : mapId === 'Forest' && mapTier === 2
+        ? [0.35, 0.92, 1.0]
+        : [1.0, 0.56, 0.18];
+
+    const stoneMat = createMkToonMaterial({
+      color: isDesert ? 0xc7813c : isCitadel ? 0x261b38 : isGrave ? 0x454c63 : 0x627080,
+      map: this.assets.getTexture(isDesert ? 'desert_sandstone' : isCitadel ? 'citadel_obsidian' : 'shrine_rune'),
+      mapStrength: 0.55,
+      rimStrength: 0.36,
+      gloss: 0.45,
+    });
+    const goldMat = createMkToonMaterial({
+      color: 0xe6b43c,
+      rimStrength: 0.55,
+      rimColor: 0xfff3b0,
+      gloss: 0.78,
+    });
+    const flameMat = createMkToonMaterial({
+      color: flameHex,
+      emissive: flameHex,
+      emissiveIntensity: 1.65,
+      rimStrength: 0.65,
+      rimColor: coreHex,
+    });
+    const outMat = createOutlineMaterial(0.056, 0x080712);
+
+    const pedPoints = [
+      new THREE.Vector2(0.68, 0.0),
+      new THREE.Vector2(0.64, 0.16),
+      new THREE.Vector2(0.46, 0.28),
+      new THREE.Vector2(0.32, 0.65),
+      new THREE.Vector2(0.26, 1.18),
+      new THREE.Vector2(0.40, 1.38),
+      new THREE.Vector2(0.32, 1.48),
+    ];
+    const bowlPoints = [
+      new THREE.Vector2(0.28, 0.0),
+      new THREE.Vector2(0.56, 0.16),
+      new THREE.Vector2(0.76, 0.44),
+      new THREE.Vector2(0.84, 0.56),
+      new THREE.Vector2(0.70, 0.58),
+      new THREE.Vector2(0.52, 0.34),
+    ];
+    const pedGeo = new THREE.LatheGeometry(pedPoints, 8);
+    const bowlGeo = new THREE.LatheGeometry(bowlPoints, 8);
+    const prongGeo = new THREE.ConeGeometry(0.11, 0.58, 4);
+    const emberBedGeo = new THREE.CylinderGeometry(0.56, 0.42, 0.12, 8);
+
+    // Stylized multi-tongue curling cel-shaded Hades flame cluster!
+    const flameOuterMat = createMkToonMaterial({
+      color: isGrave ? 0x9333ea : 0xe63917,
+      emissive: isGrave ? 0xa855f7 : 0xff4514,
+      emissiveIntensity: 1.45,
+      rimStrength: 0.6,
+      rimColor: coreHex,
+    });
+    const flameCoreMat = createMkToonMaterial({
+      color: coreHex,
+      emissive: coreHex,
+      emissiveIntensity: 1.85,
+      rimStrength: 0.5,
+      rimColor: 0xffffff,
+    });
+    const mainTongueGeo = new THREE.ConeGeometry(0.30, 1.18, 6);
+    mainTongueGeo.translate(0, 0.52, 0);
+    const sideTongueGeo = new THREE.ConeGeometry(0.20, 0.82, 5);
+    sideTongueGeo.translate(0, 0.36, 0);
+    const coreTongueGeo = new THREE.ConeGeometry(0.17, 0.68, 6);
+    coreTongueGeo.translate(0, 0.30, 0);
+
+    const pedOut = createSmoothOutlineGeometry(pedGeo);
+    const bowlOut = createSmoothOutlineGeometry(bowlGeo);
+    const prongOut = createSmoothOutlineGeometry(prongGeo);
+
+    this.disposableGeometries.push(
+      pedGeo,
+      bowlGeo,
+      prongGeo,
+      emberBedGeo,
+      mainTongueGeo,
+      sideTongueGeo,
+      coreTongueGeo,
+      pedOut,
+      bowlOut,
+      prongOut,
+    );
+    this.disposableMaterials.push(stoneMat, goldMat, flameMat, flameOuterMat, flameCoreMat, outMat);
+
+    // Carefully angled 6-brazier sanctuary circle (frames the hero vista without blocking bottom camera corners!)
+    const ringRadius = isCitadel ? 25.0 : 15.8;
+    const angles = [0.42, 1.18, 2.08, 2.86, 4.12, 5.28];
+    for (let i = 0; i < angles.length; i++) {
+      const ang = angles[i]!;
+      const bx = spawn.x + Math.cos(ang) * ringRadius;
+      const bz = spawn.z + Math.sin(ang) * ringRadius;
+      const s = terrain.sample(bx, bz);
+      if (!s.inBounds || s.slopeAngleRad > 0.42) continue;
+
+      const g = new THREE.Group();
+      g.position.set(bx, s.height - 0.08, bz);
+
+      const ped = new THREE.Mesh(pedGeo, stoneMat);
+      ped.add(new THREE.Mesh(pedOut, outMat));
+
+      const bowl = new THREE.Mesh(bowlGeo, goldMat);
+      bowl.position.y = 1.40;
+      bowl.add(new THREE.Mesh(bowlOut, outMat));
+
+      const coals = new THREE.Mesh(emberBedGeo, flameOuterMat);
+      coals.position.y = 1.88;
+
+      // 4 gothic bronze crown prongs cradling the fire cauldron
+      for (let p = 0; p < 4; p++) {
+        const pa = (p / 4) * Math.PI * 2 + Math.PI * 0.25;
+        const prong = new THREE.Mesh(prongGeo, stoneMat);
+        prong.position.set(Math.cos(pa) * 0.72, 2.08, Math.sin(pa) * 0.72);
+        prong.rotation.set(Math.sin(pa) * 0.24, -pa, -Math.cos(pa) * 0.24);
+        prong.add(new THREE.Mesh(prongOut, outMat));
+        g.add(prong);
+      }
+
+      // Multi-tongue sculpted fire flame group (animated smoothly in updateAnimatedProps!)
+      const flameCenter = new THREE.Mesh(mainTongueGeo, flameMat);
+      flameCenter.position.y = 1.86;
+      const coreMesh = new THREE.Mesh(coreTongueGeo, flameCoreMat);
+      coreMesh.position.y = 0.04;
+      flameCenter.add(coreMesh);
+      for (let t = 0; t < 3; t++) {
+        const ta = (t / 3) * Math.PI * 2;
+        const lick = new THREE.Mesh(sideTongueGeo, flameOuterMat);
+        lick.position.set(Math.cos(ta) * 0.24, 0.02, Math.sin(ta) * 0.24);
+        lick.rotation.set(Math.sin(ta) * 0.28, ta, -Math.cos(ta) * 0.28);
+        flameCenter.add(lick);
+      }
+
+      g.add(ped, bowl, coals, flameCenter);
+      this.staticGroup.add(g);
+      this.brazierFlames.push(flameCenter);
+      this.brazierLights.push({
+        x: bx,
+        y: s.height,
+        z: bz,
+        r: lightRgb[0],
+        g: lightRgb[1],
+        b: lightRgb[2],
+      });
+    }
   }
 
   private buildProceduralProps(
@@ -1061,13 +1274,13 @@ export class TerrainMeshBuilder {
       const mat = createMkToonMaterial({
         color: tintHex,
         map: this.assets.getTexture(pair.textureKey),
-        mapStrength: 0.48,
+        mapStrength: 0.86,
         vertexColors: true,
-        rimStrength: 0.32,
+        rimStrength: 0.18,
         emissive: pair.emissiveHex ?? 0x000000,
         emissiveIntensity: pair.emissiveIntensity ?? 0,
       });
-      const outMat = createOutlineMaterial(pair.outlineThickness, 0x0b0d14);
+      const outMat = createOutlineMaterial(pair.outlineThickness, 0x0a0b0f);
 
       const mesh = new THREE.InstancedMesh(pair.geometry, mat, transforms.length);
       const outMesh = new THREE.InstancedMesh(pair.outlineGeometry, outMat, transforms.length);
@@ -1085,29 +1298,144 @@ export class TerrainMeshBuilder {
       this.disposableMaterials.push(mat, outMat);
     };
 
+    /** Places hero vista landmark props at guaranteed dramatic sightlines around spawn! */
+    const placeHeroLandmarks = (
+      propKind: PropKind,
+      placements: ReadonlyArray<{ x: number; z: number; rotY: number; scale: number; shadowR: number }>,
+      tintHex = 0xffffff,
+    ) => {
+      const pair = this.assets.builtIn.getPropGeometryPair(propKind);
+      const transforms: THREE.Matrix4[] = [];
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < placements.length; i++) {
+        const p = placements[i]!;
+        const wx = spawn.x + p.x;
+        const wz = spawn.z + p.z;
+        const s = terrain.sample(wx, wz);
+        if (!s.inBounds) continue;
+        dummy.position.set(wx, s.height - 0.35, wz);
+        dummy.rotation.set(0, p.rotY, 0);
+        dummy.scale.setScalar(p.scale);
+        dummy.updateMatrix();
+        transforms.push(dummy.matrix.clone());
+
+        if (p.shadowR > 0) {
+          shadowNorm.set(s.normal.x, s.normal.y, s.normal.z).normalize();
+          shadowDummy.position.set(wx - 0.8 * p.scale, s.height + 0.06, wz - 0.6 * p.scale);
+          shadowDummy.quaternion.setFromUnitVectors(shadowUp, shadowNorm);
+          shadowDummy.scale.set(p.shadowR * p.scale, 1, p.shadowR * p.scale);
+          shadowDummy.updateMatrix();
+          shadowTransforms.push(shadowDummy.matrix.clone());
+        }
+      }
+      if (transforms.length === 0) return;
+      const mat = createMkToonMaterial({
+        color: tintHex,
+        map: this.assets.getTexture(pair.textureKey),
+        mapStrength: 0.88,
+        vertexColors: true,
+        rimStrength: 0.16,
+      });
+      const outMat = createOutlineMaterial(pair.outlineThickness, 0x0a0b0f);
+      const mesh = new THREE.InstancedMesh(pair.geometry, mat, transforms.length);
+      const outMesh = new THREE.InstancedMesh(pair.outlineGeometry, outMat, transforms.length);
+      for (let i = 0; i < transforms.length; i++) {
+        mesh.setMatrixAt(i, transforms[i]!);
+        outMesh.setMatrixAt(i, transforms[i]!);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      outMesh.instanceMatrix.needsUpdate = true;
+      mesh.frustumCulled = false;
+      outMesh.frustumCulled = false;
+      this.staticGroup.add(mesh, outMesh);
+      this.disposableMaterials.push(mat, outMat);
+    };
+
     if (mapId === 'Desert') {
       const rockTint = mapTier === 2 ? 0x99bdf5 : mapTier === 3 ? 0xe08270 : 0xffffff;
       const cactusTint = mapTier === 2 ? 0x8cc8f5 : mapTier === 3 ? 0xd98f70 : 0xffffff;
-      placeInstancedProp('cactus', 84, 20, 0.85, 1.5, cactusTint, 2.1);
-      placeInstancedProp('sandstone_obelisk', 28, 26, 0.9, 1.45, rockTint, 3.2);
-      placeInstancedProp('desert_boulder', 66, 20, 0.85, 1.85, rockTint, 2.8);
+      // Dramatic framed Sandstone Rock Arches & Half-Buried Adobe Ruins right on the Desert skyline!
+      placeHeroLandmarks(
+        'sandstone_arch',
+        [
+          { x: -16, z: -38, rotY: 0.32, scale: 1.15, shadowR: 9.0 },
+          { x: 24, z: -48, rotY: -0.45, scale: 1.28, shadowR: 9.5 },
+          { x: -34, z: 32, rotY: 1.12, scale: 1.10, shadowR: 8.5 },
+        ],
+        rockTint,
+      );
+      placeHeroLandmarks(
+        'desert_ruin',
+        [
+          { x: 14, z: -26, rotY: -0.55, scale: 1.05, shadowR: 5.5 },
+          { x: -18, z: -22, rotY: 0.72, scale: 0.95, shadowR: 5.0 },
+        ],
+        rockTint,
+      );
+      placeInstancedProp('sandstone_arch', 9, 44, 0.95, 1.40, rockTint, 8.5);
+      placeInstancedProp('desert_ruin', 14, 30, 0.85, 1.25, rockTint, 5.2);
+      placeInstancedProp('cactus', 72, 16, 0.85, 1.45, cactusTint, 2.0);
+      placeInstancedProp('dead_tree', 24, 24, 0.9, 1.38, 0xb88f64, 3.0);
+      placeInstancedProp('desert_boulder', 48, 18, 0.85, 1.65, rockTint, 2.8);
+      placeInstancedProp('sandstone_obelisk', 14, 36, 0.9, 1.35, rockTint, 3.2);
     } else if (mapId === 'Graveyard') {
       placeInstancedProp('tombstone', 110, 16, 0.85, 1.38, 0xffffff, 1.9);
       placeInstancedProp('dead_tree', 56, 22, 0.9, 1.45, 0xffffff, 3.6);
       placeInstancedProp('iron_fence', 44, 22, 0.95, 1.25, 0xffffff, 1.8);
       placeInstancedProp('crypt_arch', 10, 34, 1.0, 1.3, 0xffffff, 4.4);
     } else if (mapId === 'FinalBossMap') {
+      // Dramatic stepped weathered desert-volcanic battle arena ruins!
+      placeHeroLandmarks(
+        'desert_ruin',
+        [
+          { x: -24, z: -26, rotY: 0.4, scale: 1.1, shadowR: 5.5 },
+          { x: 26, z: -24, rotY: -0.6, scale: 1.15, shadowR: 5.5 },
+        ],
+        0xc78962,
+      );
       placeInstancedProp('citadel_pillar', 12, 34, 0.72, 0.95, 0xffffff, 3.4);
     } else {
-      // Forest T1 (emerald), T2 (twilight indigo-teal), T3 (cursed crimson-ash)
-      const treeTint = mapTier === 2 ? 0x9fa8f5 : mapTier === 3 ? 0xe68875 : 0xffffff;
-      placeInstancedProp('pine', 115, 22, 0.85, 1.48, treeTint, 4.4);
-      placeInstancedProp('oak', 68, 24, 0.9, 1.42, treeTint, 5.2);
+      // Forest T1 (earthy olive-moss + iconic ivy-draped stone Castle Ruin Towers!), T2 (violet twilight woods), T3 (crimson ash)
+      const treeTint = mapTier === 2 ? 0x8d95d6 : mapTier === 3 ? 0xd9806c : 0xffffff;
+      const stoneTint = mapTier === 2 ? 0x9aa3cf : mapTier === 3 ? 0xc9968c : 0xffffff;
+
+      // Iconic Mossy Ivy-Draped Castle Towers & Ruined Fortress Walls framing the Forest vista!
+      placeHeroLandmarks(
+        'castle_tower',
+        [
+          { x: 18, z: -24, rotY: 0.42, scale: 1.12, shadowR: 6.5 },
+          { x: -28, z: -34, rotY: 1.65, scale: 1.24, shadowR: 7.0 },
+          { x: 24, z: 26, rotY: -0.9, scale: 1.08, shadowR: 6.2 },
+          { x: -24, z: 22, rotY: 2.3, scale: 1.02, shadowR: 6.0 },
+        ],
+        stoneTint,
+      );
+      placeHeroLandmarks(
+        'castle_wall',
+        [
+          { x: 10, z: -32, rotY: 0.25, scale: 1.0, shadowR: 5.0 },
+          { x: -16, z: -38, rotY: -0.22, scale: 1.0, shadowR: 5.0 },
+        ],
+        stoneTint,
+      );
+      placeHeroLandmarks(
+        'fallen_log',
+        [
+          { x: 7.5, z: -9.5, rotY: 0.65, scale: 1.05, shadowR: 2.2 },
+          { x: -9.5, z: -12.0, rotY: -0.48, scale: 0.95, shadowR: 2.0 },
+        ],
+        treeTint,
+      );
+
+      placeInstancedProp('castle_tower', 8, 46, 0.95, 1.32, stoneTint, 6.5);
+      placeInstancedProp('castle_wall', 12, 40, 0.90, 1.20, stoneTint, 5.2);
+      placeInstancedProp('oak', 86, 17, 0.92, 1.48, treeTint, 4.6);
+      placeInstancedProp('pine', 64, 24, 0.90, 1.45, treeTint, 4.2);
+      placeInstancedProp('fallen_log', 34, 14, 0.85, 1.28, treeTint, 2.0);
       if (mapTier === 3) {
         placeInstancedProp('dead_tree', 32, 24, 0.9, 1.35, 0xbfa39e, 3.6);
       }
-      placeInstancedProp('boulder', 64, 18, 0.75, 1.55, treeTint, 2.7);
-      placeInstancedProp('ruin_pillar', 18, 32, 0.95, 1.35, treeTint, 3.2);
+      placeInstancedProp('boulder', 54, 15, 0.78, 1.65, stoneTint, 2.6);
     }
 
     // Batch ALL static prop shadows into a SINGLE ultra-fast InstancedMesh draw call!
@@ -1166,20 +1494,22 @@ export class TerrainMeshBuilder {
       attempts++;
       const angle = rng() * Math.PI * 2;
       const r = Math.sqrt(rng()) * maxR;
+      // Keep the immediate spawn sanctuary plinth clean so grass never clips Fox's boots on Title Screen!
+      if (r < 4.4) continue;
       const x = Math.cos(angle) * r;
       const z = Math.sin(angle) * r;
       const sample = terrain.sample(x, z);
       if (!sample.inBounds || sample.slopeAngleRad > 0.36) continue;
 
-      const scaleXZ = 0.72 + rng() * 0.75;
-      const scaleY = (this.currentMapId === 'Desert' ? 0.55 : 0.68) + rng() * 0.85;
+      const scaleXZ = 0.68 + rng() * 0.65;
+      const scaleY = (this.currentMapId === 'Desert' ? 0.52 : 0.65) + rng() * 0.72;
       dummy.position.set(x, sample.height - 0.04, z);
       dummy.rotation.set(0, rng() * Math.PI * 2, 0);
       dummy.scale.set(scaleXZ, scaleY, scaleXZ);
       dummy.updateMatrix();
 
       inst.setMatrixAt(placed, dummy.matrix);
-      color.copy(cA).lerp(cB, 0.4 + rng() * 0.6);
+      color.copy(cA).lerp(cB, 0.32 + rng() * 0.62);
       inst.setColorAt(placed, color);
       placed++;
     }
@@ -1193,83 +1523,6 @@ export class TerrainMeshBuilder {
 
     this.grassMesh = inst;
     this.grassMat = mat;
-    this.staticGroup.add(inst);
-    this.disposableGeometries.push(geo);
-    this.disposableMaterials.push(mat);
-  }
-
-  /**
-   * Scatters vibrant stylized biome wildflowers, mushrooms, desert crystals, or citadel embers
-   * in a single instanced draw call for rich foreground ground detail.
-   */
-  private buildBiomeWildflowers(
-    mapId: MapId,
-    mapTier: MapTier,
-    terrain: ITerrainSampler,
-    rng: () => number,
-  ): void {
-    const count = mapId === 'FinalBossMap' ? 90 : mapId === 'Desert' ? 140 : 320;
-    const geo = new THREE.OctahedronGeometry(0.24, 0);
-    geo.scale(1.15, 0.72, 1.15);
-    geo.translate(0, 0.24, 0);
-
-    const isGlowing =
-      mapId === 'FinalBossMap' ||
-      mapId === 'Graveyard' ||
-      (mapId === 'Forest' && mapTier >= 2);
-    const mat = createMkToonMaterial({
-      color: 0xffffff,
-      emissive: isGlowing ? 0x553366 : 0x111108,
-      emissiveIntensity: isGlowing ? 0.45 : 0.08,
-      rimStrength: 0.42,
-      windStrength: mapId === 'FinalBossMap' ? 0.0 : 0.14,
-    });
-
-    const colorsByBiome: number[] =
-      mapId === 'Desert'
-        ? [0xffe89e, 0xff9f43, 0x73cf57, 0xd8b4fe]
-        : mapId === 'Graveyard'
-          ? [0xc084fc, 0x70f5ff, 0x9b5de5, 0xf4e8ff]
-          : mapId === 'FinalBossMap'
-            ? [0xffc83b, 0xff5a1f, 0xd946ef]
-            : mapTier === 2
-              ? [0x70f5ff, 0xc084fc, 0xffe45e, 0xa6ffcb]
-              : mapTier === 3
-                ? [0xff6b3d, 0xffd23f, 0xff3b5c]
-                : [0xffe85c, 0xffffff, 0x70d6ff, 0xff8fab, 0xffb703];
-
-    const inst = new THREE.InstancedMesh(geo, mat, count);
-    const dummy = new THREE.Object3D();
-    const col = new THREE.Color();
-    const maxR = Math.max(30, terrain.arenaRadius - 6);
-    let placed = 0;
-
-    for (let attempt = 0; attempt < count * 4 && placed < count; attempt++) {
-      const a = rng() * Math.PI * 2;
-      const r = 4 + Math.sqrt(rng()) * (maxR - 4);
-      const x = Math.cos(a) * r;
-      const z = Math.sin(a) * r;
-      const s = terrain.sample(x, z);
-      if (!s.inBounds || s.slopeAngleRad > 0.34) continue;
-
-      const sc = 0.65 + rng() * 0.85;
-      dummy.position.set(x, s.height - 0.02, z);
-      dummy.rotation.set((rng() - 0.5) * 0.25, rng() * Math.PI * 2, (rng() - 0.5) * 0.25);
-      dummy.scale.set(sc, sc * (0.8 + rng() * 0.5), sc);
-      dummy.updateMatrix();
-      inst.setMatrixAt(placed, dummy.matrix);
-
-      col.setHex(colorsByBiome[Math.floor(rng() * colorsByBiome.length)]!);
-      inst.setColorAt(placed, col);
-      placed++;
-    }
-
-    inst.count = placed;
-    inst.visible = placed > 0;
-    inst.instanceMatrix.needsUpdate = true;
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-    inst.frustumCulled = false;
-
     this.staticGroup.add(inst);
     this.disposableGeometries.push(geo);
     this.disposableMaterials.push(mat);
@@ -1317,50 +1570,50 @@ export class TerrainMeshBuilder {
 
     if (mapId !== 'Desert') return;
 
-    // 2. Towering Spinning Desert Tornado Funnels!
-    const funnelMat = createMkToonMaterial({
-      color: palette.tornadoColor,
-      emissive: palette.dustColor,
-      emissiveIntensity: 0.28,
-      transparent: true,
-      opacity: 0.52,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      flatShading: true,
-    });
+    // 2. Swirling Atmospheric Shader Desert Tornado Cyclones (ZERO traffic-cone cylinders!)
+    const vortexMat = createTornadoVortexMaterial(palette.tornadoColor, palette.dustColor);
+    const innerMat = createTornadoVortexMaterial(palette.dustColor, 0xfff8dc);
     const ringMat = createMkToonMaterial({
       color: palette.dustColor,
       emissive: palette.dustColor,
-      emissiveIntensity: 0.42,
+      emissiveIntensity: 0.55,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.45,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    this.disposableMaterials.push(funnelMat, ringMat);
+    this.disposableMaterials.push(vortexMat, innerMat, ringMat);
 
-    const tierGeos = [
-      new THREE.CylinderGeometry(2.8, 1.1, 6.0, 9, 1, true),
-      new THREE.CylinderGeometry(4.8, 2.5, 7.5, 9, 1, true),
-      new THREE.CylinderGeometry(7.6, 4.4, 8.5, 10, 1, true),
-      new THREE.TorusGeometry(4.2, 0.35, 5, 14),
-    ];
-    this.disposableGeometries.push(...tierGeos);
+    // Smooth curved trumpet vortex lathe silhouette
+    const outerPts: THREE.Vector2[] = [];
+    const innerPts: THREE.Vector2[] = [];
+    for (let s = 0; s <= 12; s++) {
+      const t = s / 12;
+      const y = t * 23.0;
+      const rOut = 0.85 + Math.pow(t, 1.65) * 7.8;
+      const rIn = 0.42 + Math.pow(t, 1.55) * 4.4;
+      outerPts.push(new THREE.Vector2(rOut, y));
+      innerPts.push(new THREE.Vector2(rIn, y * 0.92));
+    }
+    const outerFunnelGeo = new THREE.LatheGeometry(outerPts, 20);
+    const innerFunnelGeo = new THREE.LatheGeometry(innerPts, 16);
+    const dustRingGeo = new THREE.TorusGeometry(3.6, 0.32, 6, 18);
+    this.disposableGeometries.push(outerFunnelGeo, innerFunnelGeo, dustRingGeo);
 
     const maxOrbit = Math.max(45, terrain.arenaRadius * 0.62);
     for (let i = 0; i < DESERT_TORNADO_COUNT; i++) {
       const g = new THREE.Group();
       const tiers: THREE.Mesh[] = [];
 
-      const t0 = new THREE.Mesh(tierGeos[0]!, funnelMat);
-      t0.position.y = 3.0;
-      const t1 = new THREE.Mesh(tierGeos[1]!, funnelMat);
-      t1.position.y = 9.2;
-      const t2 = new THREE.Mesh(tierGeos[2]!, funnelMat);
-      t2.position.y = 16.5;
-      const t3 = new THREE.Mesh(tierGeos[3]!, ringMat);
+      const t0 = new THREE.Mesh(outerFunnelGeo, vortexMat);
+      const t1 = new THREE.Mesh(innerFunnelGeo, innerMat);
+      const t2 = new THREE.Mesh(dustRingGeo, ringMat);
+      t2.rotation.x = Math.PI * 0.5;
+      t2.position.y = 1.4;
+      const t3 = new THREE.Mesh(dustRingGeo, ringMat);
       t3.rotation.x = Math.PI * 0.5;
-      t3.position.y = 1.6;
+      t3.position.y = 7.5;
+      t3.scale.setScalar(1.35);
 
       g.add(t0, t1, t2, t3);
       tiers.push(t0, t1, t2, t3);
@@ -1515,6 +1768,8 @@ export class TerrainMeshBuilder {
     this.magmaRimMat = null;
     this.ambientMotesMesh = null;
     this.desertTornadoes.length = 0;
+    this.brazierLights.length = 0;
+    this.brazierFlames.length = 0;
     this.floorIsLavaActive = false;
   }
 

@@ -25,401 +25,34 @@ import {
   createOutlineMaterial,
   createSmoothOutlineGeometry,
 } from '../render/toonShader';
+import {
+  buildAllPainterlyTextures,
+  type PainterlyTextureId,
+} from './PainterlyTextures';
+import {
+  buildSculptedArmParts,
+  buildSculptedCapeParts,
+  buildSculptedLegParts,
+  createCalligraphicSlashGeometry,
+  createCraggySpireGeometry,
+  createSandstoneArchGeometry,
+  createSculptedCanopyCluster,
+  extrudePolyPart,
+  lathePart,
+} from './SculptedMeshes';
 
 // ============================================================================
-// DETERMINISTIC PIXEL TEXTURE GENERATOR (THREE.NearestFilter, ZERO BLUR)
+// HIGH-RESOLUTION PAINTERLY PROCEDURAL TEXTURES (128x128 & 256x256 NearestFilter)
 // ============================================================================
-
-function hash2D(x: number, y: number, seed: number): number {
-  let h = (x * 374761393 + y * 668265263 + seed * 1442695041) | 0;
-  h = ((h ^ (h >>> 13)) * 1274126177) | 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
-}
-
-const BAYER_4X4 = [
-  0, 8, 2, 10,
-  12, 4, 14, 6,
-  3, 11, 1, 9,
-  15, 7, 13, 5,
-];
 
 function hexToRgb(hex: number): [number, number, number] {
   return [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 }
 
-function makePixelDataTexture(
-  width: number,
-  height: number,
-  painter: (x: number, y: number, w: number, h: number) => number,
-): THREE.DataTexture {
-  const data = new Uint8Array(width * height * 4);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const hex = painter(x, y, width, height);
-      const idx = (y * width + x) * 4;
-      data[idx] = (hex >> 16) & 255;
-      data[idx + 1] = (hex >> 8) & 255;
-      data[idx + 2] = hex & 255;
-      data[idx + 3] = 255;
-    }
-  }
-  const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-export type ProceduralTextureId =
-  | 'terrain_grass'
-  | 'terrain_cliff'
-  | 'terrain_desert'
-  | 'terrain_graveyard'
-  | 'terrain_citadel'
-  | 'desert_sandstone'
-  | 'desert_cactus'
-  | 'graveyard_cobble'
-  | 'graveyard_iron'
-  | 'citadel_obsidian'
-  | 'citadel_magma'
-  | 'mummy_wraps'
-  | 'metal_armor'
-  | 'spectral_ectoplasm'
-  | 'bark_grain'
-  | 'foliage_pine'
-  | 'foliage_oak'
-  | 'shrine_rune'
-  | 'chest_wood'
-  | 'rail_energy'
-  | 'portal_swirl'
-  | 'character_palette'
-  | 'stone_golem'
-  | 'bone_ivory'
-  | 'slime_gel'
-  | 'ceramic_pot'
-  | 'jump_pad';
+export type ProceduralTextureId = PainterlyTextureId;
 
 function buildAllProceduralTextures(): Record<ProceduralTextureId, THREE.DataTexture> {
-  return {
-    // Rich 64x64 dithered Forest meadow tile with fine blades, clover clusters, pebbles & sunlit flecks
-    terrain_grass: makePixelDataTexture(64, 64, (x, y) => {
-      const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const nBig = hash2D(x >> 2, y >> 2, 11);
-      const nFine = hash2D(x >> 1, y >> 1, 23);
-      const tuft = hash2D(x, y, 29);
-      // Tiny sunlit dandelion / clover sparkle dots
-      if (tuft > 0.992) return 0xfff59e;
-      if (tuft > 0.985) return 0xebffbd;
-      // Micro pebble accent
-      if (tuft < 0.009) return 0x627c70;
-      // Fine blade vertical micro-stroke
-      if (tuft > 0.91 && (y & 3) === 0) return 0xb8f062;
-      if (tuft < 0.08 && (y & 3) === 2) return 0x458c38;
-      const v = nBig * 0.52 + nFine * 0.28 + bayer * 0.20;
-      if (v > 0.74) return 0x9de656;
-      if (v > 0.50) return 0x80d446;
-      if (v > 0.26) return 0x69bd3e;
-      return 0x529e3a;
-    }),
-
-    // Rich 64x64 stratified chiseled rock cliff bands with diagonal cracks & mossy crevices
-    terrain_cliff: makePixelDataTexture(64, 64, (x, y) => {
-      const wave = Math.sin(x * 0.22) * 2.2 + Math.cos(x * 0.09) * 1.4;
-      const sy = y + Math.floor(wave);
-      const strata = Math.floor(sy / 9);
-      const seam = ((sy % 9) + 9) % 9 === 0;
-      const vCrack = Math.abs(((x * 3 + strata * 11) & 31) - 16) === 0 && hash2D(x >> 1, strata, 53) > 0.45;
-      const n = hash2D(x >> 1, y >> 1, 47);
-      const grain = hash2D(x, y, 59);
-      if (seam && grain > 0.72) return 0x4e7a56; // subtle moss line in rock seam
-      if (seam || vCrack) return 0x3b4d5e;
-      if (grain > 0.94) return 0xb0c4d1; // mineral glint
-      if (strata % 3 === 0) return n > 0.5 ? 0x8fa6b5 : 0x7a92a1;
-      if (strata % 3 === 1) return n > 0.45 ? 0x6f8596 : 0x5c7285;
-      return n > 0.5 ? 0x9bb2bf : 0x8399a8;
-    }),
-
-    // Rich 64x64 wind-sculpted fine Desert sand ripples with sparkling quartz grains & pebbles
-    terrain_desert: makePixelDataTexture(64, 64, (x, y) => {
-      const ripple = Math.sin((y + Math.sin(x * 0.19) * 3.2) * 0.58);
-      const ripple2 = Math.sin((y * 1.4 - Math.cos(x * 0.14) * 2.0) * 0.35);
-      const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const grain = hash2D(x, y, 83);
-      const patch = hash2D(x >> 2, y >> 2, 79);
-      const n = grain * 0.16 + patch * 0.16 + ripple * 0.44 + ripple2 * 0.16 + 0.48;
-      if (grain > 0.985) return 0xfff6cf; // sparkling quartz grain
-      if (grain < 0.008) return 0x9e6334; // tiny sandstone pebble
-      if (n + bayer * 0.14 > 0.88) return 0xffe6a8;
-      if (n > 0.62) return 0xf4c873;
-      if (n > 0.36) return 0xdfa752;
-      return 0xc6893b;
-    }),
-
-    // Rich 64x64 banded Desert sandstone masonry for cliffs, ruins, obelisks & Sand Golem
-    desert_sandstone: makePixelDataTexture(64, 64, (x, y) => {
-      const row = y >> 4;
-      const bx = (x + (row & 1) * 16) & 31;
-      const by = y & 15;
-      const grain = hash2D(x, y, 91);
-      if (bx === 0 || by === 0) return 0x693e23;
-      if (by === 1 && grain > 0.35) return 0xf7d28d; // sunlit bevel lip
-      const strata = (y + Math.floor(Math.sin(x * 0.25) * 1.8)) % 7;
-      const n = hash2D(x >> 1, y >> 1, 89);
-      if (strata === 0) return 0xc4773d;
-      if (strata === 3) return 0xe3a85b;
-      return n > 0.62 ? 0xf2c278 : n > 0.28 ? 0xde9e50 : 0xc7833a;
-    }),
-
-    // Ribbed emerald-sage Desert saguaro cactus pixel pleats with tiny pale spines
-    desert_cactus: makePixelDataTexture(32, 32, (x, y) => {
-      const rib = x & 3;
-      if (rib === 0) return 0x245e2e;
-      if (rib === 2 && (y & 3) === 1) return 0xf7f2c8;
-      const n = hash2D(x >> 1, y >> 1, 97);
-      return rib === 2 ? (n > 0.4 ? 0x76d459 : 0x5cb846) : 0x3e913d;
-    }),
-
-    // Rich 64x64 weathered haunted Graveyard flagstone pavers with bevels & violet moss cracks
-    terrain_graveyard: makePixelDataTexture(64, 64, (x, y) => {
-      const row = y >> 4;
-      const ox = (x + (row & 1) * 8) & 15;
-      const oy = y & 15;
-      const grain = hash2D(x, y, 107);
-      if (ox === 0 || oy === 0) return grain > 0.66 ? 0x674394 : 0x1d1a2e;
-      if ((ox === 1 || oy === 1) && grain > 0.45) return 0x747e99; // stone bevel edge
-      const tileN = hash2D((x + (row & 1) * 8) >> 4, row, 111);
-      const n = hash2D(x >> 1, y >> 1, 109);
-      if (n > 0.86 && tileN > 0.4) return 0x624f8c; // haunted violet moss patch
-      const shade = tileN * 0.45 + n * 0.55;
-      if (shade > 0.66) return 0x66708a;
-      if (shade > 0.34) return 0x525b73;
-      return 0x40485e;
-    }),
-
-    // Rich 64x64 moonlit Graveyard cobblestone for tombstones, cliffs & crypt arches
-    graveyard_cobble: makePixelDataTexture(64, 64, (x, y) => {
-      const row = y >> 3;
-      const ox = (x + (row & 1) * 6) % 12;
-      const oy = y & 7;
-      if (ox === 0 || oy === 0) return 0x191726;
-      if (oy === 1) return 0x808ca8;
-      const n = hash2D(x >> 1, y >> 1, 113);
-      if (n > 0.86) return 0x7c5bad;
-      return n > 0.52 ? 0x74809c : n > 0.22 ? 0x59637a : 0x444c61;
-    }),
-
-    // Gothic wrought-iron rivets & subtle blue-violet metal sheen
-    graveyard_iron: makePixelDataTexture(16, 16, (x, y) => {
-      if ((x === 3 || x === 12) && (y === 3 || y === 12)) return 0x95a6c2;
-      if (x === 0 || y === 0) return 0x151824;
-      const n = hash2D(x, y, 127);
-      return n > 0.65 ? 0x485369 : n > 0.3 ? 0x333b4d : 0x242a3a;
-    }),
-
-    // Rich 64x64 Obsidian FinalBossMap colosseum tiles with gilded gold & violet hairline seams
-    terrain_citadel: makePixelDataTexture(64, 64, (x, y) => {
-      const bx = x & 15;
-      const by = y & 15;
-      const g = hash2D(x, y, 131);
-      if (bx === 0 || by === 0) {
-        return g > 0.82 ? 0xffcb42 : g > 0.55 ? 0xa832d9 : 0x160f24;
-      }
-      if ((bx === 1 || by === 1) && g > 0.5) return 0x493963;
-      const tileHash = hash2D(x >> 4, y >> 4, 139);
-      const n = hash2D(x >> 1, y >> 1, 137);
-      const v = tileHash * 0.4 + n * 0.6;
-      return v > 0.66 ? 0x3d3052 : v > 0.32 ? 0x2d223e : 0x20182e;
-    }),
-
-    // Chiseled Obsidian-Gold Citadel pillar & FinalBoss armor weave
-    citadel_obsidian: makePixelDataTexture(32, 32, (x, y) => {
-      if (y === 3 || y === 28 || x === 15 || x === 16) return 0xffc83b;
-      if (y === 4 || y === 27) return 0x996b1f;
-      const n = hash2D(x >> 1, y >> 1, 149);
-      return n > 0.7 ? 0x43335c : n > 0.35 ? 0x2b203d : 0x1a1326;
-    }),
-
-    // Glowing molten magma & void veins for FinalBossMap rim / Floor-is-Lava
-    citadel_magma: makePixelDataTexture(64, 64, (x, y) => {
-      const wave =
-        Math.sin(x * 0.25 + Math.cos(y * 0.21) * 2.1) +
-        Math.cos(y * 0.24 - x * 0.16);
-      const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const v = wave * 0.3 + 0.5 + bayer * 0.14;
-      if (v > 0.90) return 0xfff394;
-      if (v > 0.72) return 0xff7b1f;
-      if (v > 0.52) return 0xd92638;
-      if (v > 0.30) return 0x4f1224;
-      return 0x1d0c1c;
-    }),
-
-    // Crisscrossed parchment linen Mummy wraps
-    mummy_wraps: makePixelDataTexture(32, 32, (x, y) => {
-      const seam = ((y + (x >> 2)) % 5) === 0 || ((y - (x >> 3)) & 7) === 0;
-      if (seam) return 0x8a7554;
-      const n = hash2D(x >> 1, y, 163);
-      return n > 0.65 ? 0xf2e6c9 : n > 0.3 ? 0xdecda8 : 0xc7b289;
-    }),
-
-    // Brushed metallic plate armor with crisp diagonal glint
-    metal_armor: makePixelDataTexture(16, 16, (x, y) => {
-      const diag = (x + y) & 15;
-      if (diag === 3 || diag === 4) return 0xffffff;
-      const n = hash2D(x, y, 173);
-      return n > 0.55 ? 0xe0e8f5 : 0xc5d0e0;
-    }),
-
-    // Ethereal wispy ectoplasm swirl for Big Bob & spectral ghosts
-    spectral_ectoplasm: makePixelDataTexture(32, 32, (x, y) => {
-      const sw = Math.sin(x * 0.38 + Math.sin(y * 0.32) * 2.0);
-      const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const v = sw * 0.4 + 0.5 + bayer * 0.2;
-      if (v > 0.85) return 0xd4fffc;
-      if (v > 0.55) return 0x9ef0ff;
-      if (v > 0.28) return 0xc299ff;
-      return 0x7b5cb8;
-    }),
-
-    // Vertical gnarled bark grain
-    bark_grain: makePixelDataTexture(32, 32, (x, y) => {
-      const streak = hash2D(x >> 1, y >> 3, 211);
-      const groove = (x + Math.floor(Math.sin(y * 0.25) * 1.4)) % 5 === 0;
-      if (groove) return 0x593a28;
-      if (streak > 0.74) return 0xb8845c;
-      if (streak > 0.35) return 0x946443;
-      return 0x784e34;
-    }),
-
-    // Crisp Bayer-dithered pine needle clusters
-    foliage_pine: makePixelDataTexture(32, 32, (x, y) => {
-      const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const n = hash2D(x >> 1, y >> 1, 307);
-      const v = n * 0.68 + bayer * 0.32;
-      if (v > 0.76) return 0xb8f272;
-      if (v > 0.45) return 0x82d657;
-      if (v > 0.2) return 0x5bb349;
-      return 0x3d8a42;
-    }),
-
-    // Sunlit clustered oak canopy texture
-    foliage_oak: makePixelDataTexture(32, 32, (x, y) => {
-      const cx = (x & 7) - 3.5;
-      const cy = (y & 7) - 3.5;
-      const dist = Math.hypot(cx, cy);
-      const n = hash2D(x >> 3, y >> 3, 353);
-      if (dist < 2.2) return n > 0.5 ? 0xdcfa78 : 0xb6ed5c;
-      if (dist < 3.6) return 0x88d649;
-      return 0x58a83e;
-    }),
-
-    // Ancient carved stone with glowing cyan pixel runes
-    shrine_rune: makePixelDataTexture(32, 32, (x, y) => {
-      const cx = Math.abs(x - 15.5);
-      const cy = Math.abs(y - 15.5);
-      const diamond = Math.abs(cx + cy - 9) < 1.3;
-      const spine = cx < 1.5 && cy < 11;
-      const bar = cy < 1.5 && cx < 6;
-      if (diamond || spine || bar) return 0x6bf7ff;
-      if (x === 0 || x === 31 || y === 0 || y === 31) return 0x4c586b;
-      const n = hash2D(x >> 1, y >> 1, 401);
-      return n > 0.6 ? 0x9aa8ba : n > 0.3 ? 0x808fa3 : 0x6c7a8f;
-    }),
-
-    // Planked treasure chest wood with bright metal/gold rivet bands
-    chest_wood: makePixelDataTexture(32, 32, (x, y) => {
-      const trim = x < 4 || x > 27 || y < 4 || y > 27 || (y >= 14 && y <= 17);
-      if (trim) {
-        const rivet = ((x === 2 || x === 29) && (y % 6 === 2)) || (y === 15 && x % 6 === 2);
-        return rivet ? 0xfff3b0 : 0xf5c542;
-      }
-      if (y % 7 === 0) return 0x5c361e;
-      const grain = hash2D(x >> 2, y, 457);
-      return grain > 0.55 ? 0xb5723c : 0x96592c;
-    }),
-
-    // Diagonal glowing cyan-gold rail grind energy stripes
-    rail_energy: makePixelDataTexture(32, 32, (x, y) => {
-      const diag = (x + y) & 15;
-      if (diag < 4) return 0xffffff;
-      if (diag < 8) return 0x4df3ff;
-      if (diag < 11) return 0x1ba6d6;
-      return 0xffd24d;
-    }),
-
-    // Concentric pixelated violet-cyan portal vortex
-    portal_swirl: makePixelDataTexture(32, 32, (x, y) => {
-      const dx = x - 15.5;
-      const dy = y - 15.5;
-      const r = Math.hypot(dx, dy);
-      const angle = Math.atan2(dy, dx);
-      const spiral = Math.sin(r * 0.85 - angle * 3.0);
-      if (r < 4.0) return 0xffffff;
-      if (spiral > 0.45) return 0x5ef2ff;
-      if (spiral > -0.1) return 0xbd5bff;
-      return 0x4f1d96;
-    }),
-
-    // Subtle crisp pixel weave for characters & enemies (preserves vertex colors cleanly!)
-    character_palette: makePixelDataTexture(16, 16, (x, y) => {
-      const bayer = BAYER_4X4[(y & 3) * 4 + (x & 3)]! / 16;
-      const n = hash2D(x, y, 521);
-      const lum = n * 0.55 + bayer * 0.45;
-      if (lum > 0.72) return 0xffffff;
-      if (lum > 0.32) return 0xf0f2f7;
-      return 0xdfe4ee;
-    }),
-
-    // Chiseled golem stone with glowing cyan fissures
-    stone_golem: makePixelDataTexture(32, 32, (x, y) => {
-      const crack = Math.abs((x * 3 + y * 2) % 29 - 14) <= 0 && hash2D(x >> 1, y >> 1, 601) > 0.35;
-      if (crack) return 0x5cf7ff;
-      const n = hash2D(x >> 1, y >> 1, 607);
-      if (n > 0.78) return 0x7ab86b;
-      if (n > 0.45) return 0xb4bec7;
-      return 0x8f9ba6;
-    }),
-
-    // Crisp subtle bone pixel texture
-    bone_ivory: makePixelDataTexture(16, 16, (x, y) => {
-      const n = hash2D(x, y >> 1, 643);
-      return n > 0.65 ? 0xfffef5 : n > 0.25 ? 0xf2ebd9 : 0xded5be;
-    }),
-
-    // Bubbly cel-shaded slime gel pattern
-    slime_gel: makePixelDataTexture(32, 32, (x, y) => {
-      const bx = (x & 7) - 3.5;
-      const by = (y & 7) - 3.5;
-      const d = Math.hypot(bx, by);
-      if (d < 1.6 && hash2D(x >> 3, y >> 3, 701) > 0.45) return 0xffffff;
-      if (d < 2.6 && hash2D(x >> 3, y >> 3, 701) > 0.45) return 0xd4fff7;
-      return 0xe6f9f5;
-    }),
-
-    // Painted ceramic terracotta pot bands
-    ceramic_pot: makePixelDataTexture(32, 32, (x, y) => {
-      if (y >= 10 && y <= 14) {
-        return ((x >> 1) + (y & 1)) % 2 === 0 ? 0xffe49e : 0x5c2b1e;
-      }
-      if (y === 9 || y === 15) return 0x3b1c14;
-      const n = hash2D(x >> 1, y >> 1, 757);
-      return n > 0.55 ? 0xeb9b6a : 0xd9804c;
-    }),
-
-    // Jump pad spring chevron pattern
-    jump_pad: makePixelDataTexture(32, 32, (x, y) => {
-      const dx = x - 15.5;
-      const dy = y - 15.5;
-      const r = Math.hypot(dx, dy);
-      if (r < 4.5) return 0xffffff;
-      if (r < 9.5) return 0x4df5ff;
-      if (r < 12.5) return 0x1aa3d9;
-      return 0x2c3647;
-    }),
-  };
+  return buildAllPainterlyTextures();
 }
 
 // ============================================================================
@@ -551,16 +184,28 @@ function makePair(
   parts: readonly ColoredPartSpec[],
   textureKey: ProceduralTextureId,
   outlineThickness = 0.048,
-  extra?: { emissiveHex?: number; emissiveIntensity?: number; gloss?: number },
+  extra?: { emissiveHex?: number; emissiveIntensity?: number; gloss?: number; uvScale?: [number, number] },
 ): LowPolyGeometryPair {
   const geometry = mergeColoredParts(parts);
+  if (extra?.uvScale) {
+    const uvAttr = geometry.getAttribute('uv');
+    if (uvAttr) {
+      const [su, sv] = extra.uvScale;
+      for (let i = 0; i < uvAttr.count; i++) {
+        uvAttr.setXY(i, uvAttr.getX(i) * su, uvAttr.getY(i) * sv);
+      }
+      uvAttr.needsUpdate = true;
+    }
+  }
   const outlineGeometry = createSmoothOutlineGeometry(geometry);
   return {
     geometry,
     outlineGeometry,
     textureKey,
     outlineThickness,
-    ...extra,
+    emissiveHex: extra?.emissiveHex,
+    emissiveIntensity: extra?.emissiveIntensity,
+    gloss: extra?.gloss,
   };
 }
 
@@ -618,7 +263,7 @@ interface CharacterStylePalette {
 const CHARACTER_PALETTES: Record<CharacterId, CharacterStylePalette> = {
   Fox: { primary: 0xf27127, secondary: 0x2e8555, accent: 0xfff1d6, skin: 0xf58438, boots: 0x452d24, weapon: 0x7d4c2a, weaponGlow: 0xff8b1f, scale: 1.0 },
   Calcium: { primary: 0xf5f0de, secondary: 0x232a3b, accent: 0xff3b5c, skin: 0xf7f2e1, boots: 0x3ad5ff, weapon: 0xfcf9ed, weaponGlow: 0xffe89e, scale: 1.0 },
-  SirOofie: { primary: 0x9aa8ba, secondary: 0xd62839, accent: 0xffcb3b, skin: 0x6c7a8f, boots: 0x4a5568, weapon: 0xdbe6f2, weaponGlow: 0x7df9ff, scale: 1.06 },
+  SirOofie: { primary: 0xd0d9e3, secondary: 0x3b4454, accent: 0xf0be3c, skin: 0x6c7a8f, boots: 0x454f5e, weapon: 0xe3ecf5, weaponGlow: 0x7df9ff, scale: 1.06 },
   Megachad: { primary: 0xe6a67c, secondary: 0x1d2333, accent: 0xffd23f, skin: 0xebae86, boots: 0x252c40, weapon: 0xffd23f, weaponGlow: 0xffd84d, scale: 1.32 },
   Amog: { primary: 0xd93838, secondary: 0x3b2a54, accent: 0x8cff3b, skin: 0x73e069, boots: 0x2a2438, weapon: 0x8cff3b, weaponGlow: 0xaaff00, scale: 1.0 },
   Athena: { primary: 0xf4f1e6, secondary: 0x2a7de0, accent: 0xffd24c, skin: 0xf5cba7, boots: 0xd4a437, weapon: 0xffdf6b, weaponGlow: 0x70e4ff, scale: 1.02 },
@@ -626,10 +271,10 @@ const CHARACTER_PALETTES: Record<CharacterId, CharacterStylePalette> = {
   Birdo: { primary: 0x3ebeff, secondary: 0xf5f9ff, accent: 0xffb703, skin: 0x4fc8ff, boots: 0xf29f29, weapon: 0xa6f7ff, weaponGlow: 0x5ef2ff, scale: 0.96 },
   Bush: { primary: 0x45a336, secondary: 0x6b4d32, accent: 0xbef25c, skin: 0x38802c, boots: 0x473322, weapon: 0x4b5866, weaponGlow: 0x70ff98, scale: 1.0 },
   SirChadwell: { primary: 0x432763, secondary: 0x1d132b, accent: 0xd938ff, skin: 0x675080, boots: 0x191124, weapon: 0xc138ff, weaponGlow: 0xe66bff, scale: 1.08 },
-  Cl4nk: { primary: 0xd19c3b, secondary: 0x425263, accent: 0x52f2ff, skin: 0xd9a84c, boots: 0x2d3845, weapon: 0xa6b8cc, weaponGlow: 0x52f2ff, scale: 0.98 },
+  Cl4nk: { primary: 0x1d6de8, secondary: 0x262c38, accent: 0x52d6ff, skin: 0x6b3e1f, boots: 0x5c3318, weapon: 0xa6b8cc, weaponGlow: 0x52f2ff, scale: 1.02 },
   Dicehead: { primary: 0xc92a3e, secondary: 0x1e2436, accent: 0xffd23f, skin: 0xf7f8fc, boots: 0x181d2b, weapon: 0xf7f8fc, weaponGlow: 0xffd23f, scale: 1.0 },
-  Monke: { primary: 0x8f5633, secondary: 0x2d7a47, accent: 0xffe03b, skin: 0xdba06b, boots: 0x59341e, weapon: 0xffe03b, weaponGlow: 0xfff078, scale: 1.0 },
-  Ninja: { primary: 0x1f2638, secondary: 0x33415e, accent: 0xff3355, skin: 0xe6ba95, boots: 0x141824, weapon: 0xe6eef7, weaponGlow: 0x5cf2ff, scale: 0.98 },
+  Monke: { primary: 0x5c361a, secondary: 0x303645, accent: 0xffe03b, skin: 0xcf9f6b, boots: 0xc99663, weapon: 0xffe03b, weaponGlow: 0xfff078, scale: 1.08 },
+  Ninja: { primary: 0x1d222e, secondary: 0x2b3447, accent: 0x3a6ec4, skin: 0xe6ba95, boots: 0x141824, weapon: 0xedf4fc, weaponGlow: 0xffe84d, scale: 1.02 },
   Noelle: { primary: 0x64d6ff, secondary: 0xf0f9ff, accent: 0x3b82f6, skin: 0xf7d6c3, boots: 0x2b5eb0, weapon: 0xb8f3ff, weaponGlow: 0x7ae5ff, scale: 0.98 },
   Ogre: { primary: 0x69a842, secondary: 0x734b30, accent: 0xe8d5a8, skin: 0x77b84f, boots: 0x4a301e, weapon: 0xa3b1c2, weaponGlow: 0xff9f43, scale: 1.25 },
   Roberto: { primary: 0x28233b, secondary: 0x622f7d, accent: 0x4dff9e, skin: 0x12101c, boots: 0x181526, weapon: 0xc4d0e0, weaponGlow: 0x4dff9e, scale: 1.02 },
@@ -809,6 +454,11 @@ export type PropKind =
   | 'oak'
   | 'boulder'
   | 'ruin_pillar'
+  | 'castle_tower'
+  | 'castle_wall'
+  | 'fallen_log'
+  | 'sandstone_arch'
+  | 'desert_ruin'
   | 'cactus'
   | 'tombstone'
   | 'desert_boulder'
@@ -965,25 +615,25 @@ export class ProceduralLowPolyPack implements IAssetPack {
     const mainMat = createMkToonMaterial({
       color: 0xffffff,
       map: bodyTex,
-      mapStrength: 0.45,
+      mapStrength: 0.78,
       vertexColors: true,
-      rimStrength: 0.42,
+      rimStrength: 0.28,
       rimColor: 0xe6fbff,
-      gloss: characterId === 'SirOofie' || characterId === 'Cl4nk' || characterId === 'Spaceman' || characterId === 'Athena' ? 0.55 : 0.18,
+      gloss: characterId === 'SirOofie' || characterId === 'Spaceman' || characterId === 'Athena' ? 0.50 : characterId === 'Cl4nk' ? 0.24 : 0.14,
     });
     toonMaterials.push(mainMat);
 
     const glowMat = createMkToonMaterial({
       color: pal.weaponGlow,
       emissive: pal.weaponGlow,
-      emissiveIntensity: 0.9,
-      rimStrength: 0.6,
+      emissiveIntensity: 0.95,
+      rimStrength: 0.5,
       rimColor: 0xffffff,
       vertexColors: false,
     });
     toonMaterials.push(glowMat);
 
-    const outlineMat = createOutlineMaterial(0.052, 0x0b0d14);
+    const outlineMat = createOutlineMaterial(0.038, 0x0a0b0f);
     extraMaterials.push(outlineMat);
 
     const add = (parent: THREE.Object3D, parts: readonly ColoredPartSpec[]) =>
@@ -1001,16 +651,27 @@ export class ProceduralLowPolyPack implements IAssetPack {
       return m;
     };
 
-    const attachStdLimbs = (armCol: number, handCol: number, legCol: number, bootCol: number, armX = 0.44, legX = 0.19, hipY = 0.64, shoulderY = 1.34) => {
-      leftArm.position.set(-armX, shoulderY, 0);
-      rightArm.position.set(armX, shoulderY, 0);
-      leftLeg.position.set(-legX, hipY, 0);
-      rightLeg.position.set(legX, hipY, 0);
+    const attachStdLimbs = (
+      armCol: number,
+      handCol: number,
+      legCol: number,
+      bootCol: number,
+      armX = 0.40,
+      legX = 0.17,
+      hipY = 0.74,
+      shoulderY = 1.40,
+    ) => {
+      const effHipY = Math.max(0.74, hipY);
+      const effShoulderY = Math.max(1.36, shoulderY);
+      leftArm.position.set(-armX, effShoulderY, 0);
+      rightArm.position.set(armX, effShoulderY, 0);
+      leftLeg.position.set(-legX, effHipY, 0);
+      rightLeg.position.set(legX, effHipY, 0);
       bodyPivot.add(leftArm, rightArm, leftLeg, rightLeg);
-      add(leftArm, [cyl(0.105, 0.095, 0.5, 6, armCol, [0, -0.24, 0]), box(0.16, 0.15, 0.16, handCol, [0, -0.52, 0.02])]);
-      add(rightArm, [cyl(0.105, 0.095, 0.5, 6, armCol, [0, -0.24, 0]), box(0.16, 0.15, 0.16, handCol, [0, -0.52, 0.02])]);
-      add(leftLeg, [cyl(0.12, 0.105, 0.46, 6, legCol, [0, -0.22, 0]), box(0.22, 0.18, 0.32, bootCol, [0, -0.52, 0.06])]);
-      add(rightLeg, [cyl(0.12, 0.105, 0.46, 6, legCol, [0, -0.22, 0]), box(0.22, 0.18, 0.32, bootCol, [0, -0.52, 0.06])]);
+      add(leftArm, buildSculptedArmParts(pal.secondary, armCol, pal.accent, handCol, -1));
+      add(rightArm, buildSculptedArmParts(pal.secondary, armCol, pal.accent, handCol, 1));
+      add(leftLeg, buildSculptedLegParts(legCol, pal.accent, pal.secondary, bootCol));
+      add(rightLeg, buildSculptedLegParts(legCol, pal.accent, pal.secondary, bootCol));
     };
 
     root.add(bodyPivot);
@@ -1018,49 +679,327 @@ export class ProceduralLowPolyPack implements IAssetPack {
 
     switch (characterId) {
       case 'Fox': {
+        // SCULPTED MYTHIC FOX PYRO-RANGER (Hero Showcase Flagship!)
         add(bodyPivot, [
-          cyl(0.32, 0.42, 0.82, 7, pal.secondary, [0, 1.05, 0]),
-          cyl(0.38, 0.39, 0.16, 7, 0x5c3721, [0, 0.82, 0]),
-          box(0.18, 0.14, 0.12, 0xffd23f, [0, 0.82, 0.36]),
-          cone(0.34, 0.28, 7, pal.accent, [0, 1.46, 0.05], [Math.PI, 0, 0]),
+          // Sculpted hourglass heroic tunic & flared ranger skirt
+          lathePart(
+            [
+              [0.48, 0.52],
+              [0.42, 0.72],
+              [0.31, 0.94],
+              [0.39, 1.30],
+              [0.35, 1.44],
+              [0.24, 1.50],
+            ],
+            10,
+            pal.secondary,
+          ),
+          // Gold-hemmed front tabard banner strip
+          extrudePolyPart(
+            [
+              [-0.14, 0.48],
+              [0.14, 0.48],
+              [0.11, 0.86],
+              [-0.11, 0.86],
+            ],
+            0.06,
+            0.014,
+            0x1c5939,
+            [0, 0, 0.38],
+            [-0.08, 0, 0],
+          ),
+          extrudePolyPart(
+            [
+              [-0.15, 0.45],
+              [0.15, 0.45],
+              [0.14, 0.52],
+              [-0.14, 0.52],
+            ],
+            0.07,
+            0.01,
+            0xf5c542,
+            [0, 0, 0.39],
+            [-0.08, 0, 0],
+          ),
+          // Sculpted leather waist belt + forged brass buckle + hip potion pouch
+          lathePart(
+            [
+              [0.34, 0.82],
+              [0.37, 0.90],
+              [0.34, 0.98],
+            ],
+            10,
+            0x4a291a,
+          ),
+          box(0.18, 0.16, 0.11, 0xf5c542, [0, 0.90, 0.35]),
+          octa(0.06, 0xff5a1f, [0, 0.90, 0.42]),
+          box(0.16, 0.20, 0.14, 0x6b3e26, [-0.34, 0.82, 0.12], [0, 0.3, 0.12]),
+          // Diagonal leather bandolier strap across chest
+          box(0.11, 0.68, 0.44, 0x4a291a, [0, 1.18, 0.02], [0, 0, 0.62]),
+          // Layered sculpted shoulder mantle & plush cream fur ruff collar (bottom-to-top for true outward Lathe normals!)
+          lathePart(
+            [
+              [0.40, 1.24],
+              [0.50, 1.32],
+              [0.44, 1.46],
+              [0.24, 1.54],
+            ],
+            10,
+            0x2d784f,
+          ),
+          lathePart(
+            [
+              [0.22, 1.34],
+              [0.32, 1.36],
+              [0.36, 1.48],
+              [0.20, 1.56],
+            ],
+            9,
+            pal.accent,
+            [0, 0.02, 0.06],
+          ),
+          // Gilded ranger collar brooch
+          octa(0.095, 0xffd24c, [0, 1.40, 0.36]),
         ]);
-        headPivot.position.set(0, 1.56, 0.02);
+
+        // Dramatic billowing split-tail ranger cape behind Fox!
+        capePivot = new THREE.Group();
+        capePivot.position.set(0, 1.44, -0.26);
+        bodyPivot.add(capePivot);
+        add(capePivot, buildSculptedCapeParts(0x1e5c3c, 0xf5c542, 0.86, 1.12));
+
+        // Trimmer athletic Fox head proportions matching heroic Valheim/PS1 anatomy!
+        headPivot.position.set(0, 1.56, 0.03);
+        headPivot.scale.setScalar(0.86);
         bodyPivot.add(headPivot);
         const head: ColoredPartSpec[] = [
-          dodec(0.38, pal.primary, [0, 0.24, 0], undefined, [1.05, 0.92, 1.02]),
-          cone(0.16, 0.26, 5, pal.accent, [-0.3, 0.16, 0.1], [0, 0, 1.15]),
-          cone(0.16, 0.26, 5, pal.accent, [0.3, 0.16, 0.1], [0, 0, -1.15]),
-          cone(0.18, 0.42, 5, pal.primary, [0, 0.17, 0.38], [Math.PI * 0.52, 0, 0]),
-          box(0.2, 0.09, 0.24, pal.accent, [0, 0.1, 0.34]),
-          octa(0.065, 0x161822, [0, 0.18, 0.58]),
-          cone(0.14, 0.42, 4, pal.primary, [-0.22, 0.62, -0.02], [0.1, 0, 0.22]),
-          cone(0.07, 0.18, 4, 0x1b1e29, [-0.26, 0.77, -0.01], [0.1, 0, 0.22]),
-          cone(0.14, 0.42, 4, pal.primary, [0.22, 0.62, -0.02], [0.1, 0, -0.22]),
-          cone(0.07, 0.18, 4, 0x1b1e29, [0.26, 0.77, -0.01], [0.1, 0, -0.22]),
-          box(0.1, 0.11, 0.06, 0x12151f, [-0.15, 0.29, 0.32]),
-          box(0.04, 0.04, 0.07, 0xffffff, [-0.13, 0.32, 0.33]),
-          box(0.1, 0.11, 0.06, 0x12151f, [0.15, 0.29, 0.32]),
-          box(0.04, 0.04, 0.07, 0xffffff, [0.17, 0.32, 0.33]),
+          // Smoother 14-segment sculpted fox cranium
+          lathePart(
+            [
+              [0.14, 0.02],
+              [0.34, 0.12],
+              [0.41, 0.27],
+              [0.36, 0.43],
+              [0.24, 0.53],
+              [0.08, 0.58],
+            ],
+            14,
+            pal.primary,
+            [0, 0, 0],
+            undefined,
+            [1.08, 1.0, 0.98],
+          ),
+          // Clean symmetric sweeping cream cheek tufts hugging lower jawline
+          extrudePolyPart(
+            [
+              [0.0, 0.0],
+              [0.02, 0.14],
+              [-0.16, 0.16],
+              [-0.22, 0.04],
+            ],
+            0.09,
+            0.02,
+            pal.accent,
+            [-0.20, 0.10, 0.10],
+            [0, -0.24, -0.26],
+          ),
+          extrudePolyPart(
+            [
+              [0.0, 0.0],
+              [0.22, 0.04],
+              [0.16, 0.16],
+              [-0.02, 0.14],
+            ],
+            0.09,
+            0.02,
+            pal.accent,
+            [0.20, 0.10, 0.10],
+            [0, 0.24, 0.26],
+          ),
+          // Smooth tapered fox muzzle + clean cream muzzle-underbelly + dark glossy nose
+          lathePart(
+            [
+              [0.21, 0.0],
+              [0.16, 0.18],
+              [0.105, 0.34],
+              [0.055, 0.45],
+            ],
+            10,
+            pal.primary,
+            [0, 0.22, 0.20],
+            [Math.PI * 0.52, 0, 0],
+          ),
+          lathePart(
+            [
+              [0.17, 0.0],
+              [0.12, 0.16],
+              [0.06, 0.34],
+            ],
+            8,
+            pal.accent,
+            [0, 0.15, 0.24],
+            [Math.PI * 0.52, 0, 0],
+          ),
+          octa(0.064, 0x0b0a12, [0, 0.20, 0.65]),
+          // Dramatic sculpted notched fox ears with cream inner fuzz & obsidian tips!
+          extrudePolyPart(
+            [
+              [-0.14, 0.0],
+              [0.12, 0.0],
+              [0.04, 0.48],
+              [-0.06, 0.34],
+              [-0.12, 0.24],
+            ],
+            0.09,
+            0.018,
+            pal.primary,
+            [-0.23, 0.44, -0.02],
+            [0.08, -0.18, 0.28],
+          ),
+          extrudePolyPart(
+            [
+              [-0.07, 0.04],
+              [0.06, 0.04],
+              [0.02, 0.30],
+            ],
+            0.05,
+            0.01,
+            pal.accent,
+            [-0.22, 0.46, 0.03],
+            [0.08, -0.18, 0.28],
+          ),
+          cone(0.075, 0.20, 5, 0x100e18, [-0.34, 0.86, 0.0], [0.08, 0, 0.28]),
+          extrudePolyPart(
+            [
+              [-0.12, 0.0],
+              [0.14, 0.0],
+              [0.12, 0.24],
+              [0.06, 0.34],
+              [-0.04, 0.48],
+            ],
+            0.09,
+            0.018,
+            pal.primary,
+            [0.23, 0.44, -0.02],
+            [0.08, 0.18, -0.28],
+          ),
+          extrudePolyPart(
+            [
+              [-0.06, 0.04],
+              [0.07, 0.04],
+              [-0.02, 0.30],
+            ],
+            0.05,
+            0.01,
+            pal.accent,
+            [0.22, 0.46, 0.03],
+            [0.08, 0.18, -0.28],
+          ),
+          cone(0.075, 0.20, 5, 0x100e18, [0.34, 0.86, 0.0], [0.08, 0, -0.28]),
+          // Clean bold angled eyebrows + crisp glowing amber-gold irises proudly seated on face!
+          box(0.16, 0.042, 0.07, 0x100b14, [-0.165, 0.385, 0.37], [0, 0.24, -0.24]),
+          box(0.16, 0.042, 0.07, 0x100b14, [0.165, 0.385, 0.37], [0, -0.24, 0.24]),
+          box(0.12, 0.105, 0.045, 0x0b0912, [-0.16, 0.315, 0.37], [0, 0.24, -0.06]),
+          box(0.12, 0.105, 0.045, 0x0b0912, [0.16, 0.315, 0.37], [0, -0.24, 0.06]),
+          box(0.082, 0.076, 0.052, 0xffd23f, [-0.155, 0.315, 0.38], [0, 0.24, 0]),
+          box(0.082, 0.076, 0.052, 0xffd23f, [0.155, 0.315, 0.38], [0, -0.24, 0]),
+          box(0.026, 0.062, 0.060, 0x0b0912, [-0.152, 0.315, 0.385], [0, 0.24, 0]),
+          box(0.026, 0.062, 0.060, 0x0b0912, [0.152, 0.315, 0.385], [0, -0.24, 0]),
+          box(0.026, 0.028, 0.065, 0xffffff, [-0.135, 0.334, 0.39]),
+          box(0.026, 0.028, 0.065, 0xffffff, [0.175, 0.334, 0.39]),
         ];
-        addHatParts(head, hatId, 0.58);
+        addHatParts(head, hatId, 0.60);
         add(headPivot, head);
 
+        // Plush multi-segmented sweeping fox tail with cream flame-tip!
         tailPivot = new THREE.Group();
-        tailPivot.position.set(0, 0.8, -0.34);
+        tailPivot.position.set(0, 0.78, -0.34);
         bodyPivot.add(tailPivot);
         add(tailPivot, [
-          cone(0.24, 0.58, 6, pal.primary, [0, 0.12, -0.26], [-1.15, 0, 0]),
-          dodec(0.26, pal.primary, [0, 0.24, -0.52], undefined, [0.95, 0.9, 1.35]),
-          cone(0.22, 0.42, 6, pal.accent, [0, 0.32, -0.86], [-1.35, 0, 0]),
+          lathePart(
+            [
+              [0.09, 0.0],
+              [0.24, 0.30],
+              [0.28, 0.56],
+              [0.18, 0.80],
+            ],
+            8,
+            pal.primary,
+            [0, 0.02, -0.04],
+            [-1.25, 0, 0],
+          ),
+          lathePart(
+            [
+              [0.20, 0.76],
+              [0.16, 0.96],
+              [0.02, 1.18],
+            ],
+            8,
+            pal.accent,
+            [0, 0.02, -0.04],
+            [-1.25, 0, 0],
+          ),
         ]);
-        attachStdLimbs(pal.primary, pal.boots, pal.primary, pal.boots, 0.42, 0.18, 0.66, 1.34);
-        weaponPivot.position.set(0.04, -0.44, 0.18);
+
+        attachStdLimbs(pal.primary, pal.boots, 0x264d36, pal.boots, 0.41, 0.17, 0.74, 1.40);
+
+        // Fire Staff cleanly held in Fox's athletic hand!
+        weaponPivot.position.set(0.04, -0.58, 0.14);
         rightArm.add(weaponPivot);
         add(weaponPivot, [
-          cyl(0.055, 0.065, 1.95, 6, pal.weapon, [0, 0.36, 0.15], [0.22, 0, 0]),
-          torus(0.18, 0.045, 5, 8, 0xffc83b, [0, 1.38, 0.38]),
+          // Tapered carved hardwood staff with bronze wrap collars
+          lathePart(
+            [
+              [0.03, -0.68],
+              [0.06, -0.58],
+              [0.048, 0.15],
+              [0.068, 1.12],
+              [0.11, 1.24],
+              [0.06, 1.32],
+            ],
+            8,
+            pal.weapon,
+            [0, 0.25, 0.14],
+            [0.20, 0, 0],
+          ),
+          // Bronze grip rings & pommel cap
+          cyl(0.072, 0.072, 0.16, 8, 0xd49b2a, [0, 0.25, 0.14], [0.20, 0, 0]),
+          cyl(0.095, 0.075, 0.14, 8, 0xf5c542, [0, 1.34, 0.36], [0.20, 0, 0]),
+          // Sculpted twin gilded crescent cradle horns holding the fire orb!
+          extrudePolyPart(
+            [
+              [-0.06, 0.0],
+              [0.06, 0.0],
+              [0.28, 0.26],
+              [0.18, 0.56],
+              [0.10, 0.46],
+              [0.18, 0.26],
+            ],
+            0.06,
+            0.012,
+            0xffcb3b,
+            [0, 1.36, 0.36],
+            [0.20, 0, 0],
+          ),
+          extrudePolyPart(
+            [
+              [0.06, 0.0],
+              [-0.06, 0.0],
+              [-0.28, 0.26],
+              [-0.18, 0.56],
+              [-0.10, 0.46],
+              [-0.18, 0.26],
+            ],
+            0.06,
+            0.012,
+            0xffcb3b,
+            [0, 1.36, 0.36],
+            [0.20, 0, 0],
+          ),
+          // Orbiting golden arcane halo ring
+          torus(0.28, 0.032, 6, 14, 0xffe46b, [0, 1.62, 0.42], [0.20, 0.4, 0]),
         ]);
-        addGlowOrb(weaponPivot, new THREE.OctahedronGeometry(0.19, 0), [0, 1.38, 0.38]);
+        addGlowOrb(weaponPivot, new THREE.OctahedronGeometry(0.18, 1), [0, 1.62, 0.42]);
         break;
       }
 
@@ -1071,13 +1010,28 @@ export class ProceduralLowPolyPack implements IAssetPack {
         boardPivot.position.set(0, 0.14, 0);
         bodyPivot.add(boardPivot);
         add(boardPivot, [
-          box(0.68, 0.08, 1.48, 0x262d40, [0, 0.14, 0]),
-          box(0.56, 0.09, 1.38, pal.accent, [0, 0.145, 0]),
-          box(0.24, 0.095, 1.36, 0x3ad5ff, [0, 0.15, 0]),
-          box(0.62, 0.07, 0.28, pal.accent, [0, 0.2, 0.82], [-0.36, 0, 0]),
-          box(0.62, 0.07, 0.28, pal.accent, [0, 0.2, -0.82], [0.36, 0, 0]),
-          box(0.64, 0.08, 0.12, 0xb8c5d6, [0, 0.05, 0.48]),
-          box(0.64, 0.08, 0.12, 0xb8c5d6, [0, 0.05, -0.48]),
+          extrudePolyPart(
+            [
+              [-0.32, -0.68],
+              [0.32, -0.68],
+              [0.38, -0.45],
+              [0.38, 0.45],
+              [0.32, 0.68],
+              [0.0, 0.86],
+              [-0.32, 0.68],
+              [-0.38, 0.45],
+              [-0.38, -0.45],
+            ],
+            0.08,
+            0.016,
+            0x1b2136,
+            [0, 0.15, 0],
+            [Math.PI * 0.5, 0, 0],
+          ),
+          box(0.46, 0.095, 1.38, pal.accent, [0, 0.155, 0]),
+          box(0.20, 0.105, 1.36, 0x3ad5ff, [0, 0.16, 0]),
+          box(0.64, 0.08, 0.12, 0xc8d6e8, [0, 0.05, 0.48]),
+          box(0.64, 0.08, 0.12, 0xc8d6e8, [0, 0.05, -0.48]),
         ]);
         const wheelCoords: V3[] = [[-0.36, 0.04, 0.48], [0.36, 0.04, 0.48], [-0.36, 0.04, -0.48], [0.36, 0.04, -0.48]];
         for (const wc of wheelCoords) {
@@ -1085,106 +1039,155 @@ export class ProceduralLowPolyPack implements IAssetPack {
           wG.position.set(wc[0], wc[1], wc[2]);
           boardPivot.add(wG);
           add(wG, [
-            cyl(0.11, 0.11, 0.12, 8, 0xffe042, undefined, [0, 0, Math.PI * 0.5]),
-            cyl(0.05, 0.05, 0.135, 6, 0x222836, undefined, [0, 0, Math.PI * 0.5]),
+            cyl(0.115, 0.115, 0.13, 10, 0xffe042, undefined, [0, 0, Math.PI * 0.5]),
+            cyl(0.055, 0.055, 0.145, 8, 0x1e2536, undefined, [0, 0, Math.PI * 0.5]),
           ]);
           wheelPivots.push(wG);
         }
         add(bodyPivot, [
-          cyl(0.08, 0.09, 0.72, 6, pal.primary, [0, deckH + 0.98, -0.04]),
-          box(0.54, 0.1, 0.34, pal.primary, [0, deckH + 1.24, 0.02]),
-          box(0.48, 0.09, 0.3, pal.primary, [0, deckH + 1.08, 0.02]),
-          box(0.4, 0.09, 0.26, pal.primary, [0, deckH + 0.92, 0.02]),
-          box(0.32, 0.42, 0.22, 0x1b202e, [0, deckH + 1.08, 0.01]),
-          box(0.44, 0.2, 0.3, pal.secondary, [0, deckH + 0.7, 0]),
-          box(0.48, 0.07, 0.33, pal.accent, [0, deckH + 0.78, 0]),
+          cyl(0.08, 0.095, 0.78, 7, pal.primary, [0, deckH + 1.0, -0.04]),
+          box(0.56, 0.095, 0.34, pal.primary, [0, deckH + 1.26, 0.02]),
+          box(0.50, 0.09, 0.31, pal.primary, [0, deckH + 1.10, 0.02]),
+          box(0.42, 0.085, 0.27, pal.primary, [0, deckH + 0.94, 0.02]),
+          box(0.32, 0.44, 0.22, 0x151826, [0, deckH + 1.10, 0.01]),
+          // Sculpted tattered skater vest & belt
+          lathePart(
+            [
+              [0.34, deckH + 0.58],
+              [0.30, deckH + 0.78],
+              [0.36, deckH + 0.84],
+            ],
+            8,
+            pal.secondary,
+          ),
+          box(0.48, 0.08, 0.35, pal.accent, [0, deckH + 0.80, 0]),
         ]);
-        headPivot.position.set(0, deckH + 1.44, 0.02);
+        // Glowing cyan soul-core inside Calcium's ribcage!
+        addGlowOrb(bodyPivot, new THREE.OctahedronGeometry(0.14, 0), [0, deckH + 1.12, 0.06]);
+
+        // Billowing scarlet reaper-skater scarf behind Calcium!
+        capePivot = new THREE.Group();
+        capePivot.position.set(0, deckH + 1.38, -0.22);
+        bodyPivot.add(capePivot);
+        add(capePivot, buildSculptedCapeParts(pal.accent, 0xffd23f, 0.58, 0.96));
+
+        // Sculpted anatomical white skeleton skull with cool dark sunglasses (shot_03)!
+        headPivot.position.set(0, deckH + 1.46, 0.02);
+        headPivot.scale.setScalar(0.88);
         bodyPivot.add(headPivot);
         const skull: ColoredPartSpec[] = [
-          dodec(0.36, pal.primary, [0, 0.28, 0], undefined, [1.05, 1.0, 1.0]),
-          box(0.34, 0.16, 0.24, pal.primary, [0, 0.05, 0.16]),
-          box(0.28, 0.05, 0.06, 0x12151f, [0, 0.04, 0.28]),
-          box(0.14, 0.14, 0.08, 0x12151f, [-0.13, 0.27, 0.31]),
-          box(0.14, 0.14, 0.08, 0x12151f, [0.13, 0.27, 0.31]),
-          box(0.05, 0.05, 0.09, 0x52f2ff, [-0.13, 0.28, 0.32]),
-          box(0.05, 0.05, 0.09, 0x52f2ff, [0.13, 0.28, 0.32]),
-          cone(0.05, 0.09, 3, 0x12151f, [0, 0.16, 0.34]),
-          cyl(0.37, 0.37, 0.1, 8, pal.accent, [0, 0.42, 0]),
-          box(0.1, 0.28, 0.06, pal.accent, [-0.12, 0.34, -0.38], [0.45, 0, 0.25]),
-          box(0.1, 0.24, 0.06, pal.accent, [0.1, 0.36, -0.38], [0.55, 0, -0.2]),
+          lathePart(
+            [
+              [0.16, 0.06],
+              [0.32, 0.18],
+              [0.35, 0.34],
+              [0.28, 0.50],
+              [0.12, 0.58],
+            ],
+            10,
+            pal.primary,
+            [0, 0, 0],
+            undefined,
+            [1.02, 1.0, 1.04],
+          ),
+          box(0.28, 0.15, 0.24, pal.primary, [0, 0.04, 0.16]),
+          box(0.22, 0.045, 0.06, 0x12151f, [0, 0.04, 0.28]),
+          cone(0.045, 0.08, 3, 0x12151f, [0, 0.17, 0.33]),
+          // Cool dark skater sunglasses!
+          box(0.50, 0.14, 0.10, 0x0b0e14, [0, 0.28, 0.31]),
+          box(0.17, 0.09, 0.11, 0x1b2333, [-0.12, 0.28, 0.32]),
+          box(0.17, 0.09, 0.11, 0x1b2333, [0.12, 0.28, 0.32]),
+          box(0.045, 0.035, 0.12, 0xffffff, [-0.08, 0.30, 0.325]),
+          box(0.045, 0.035, 0.12, 0xffffff, [0.16, 0.30, 0.325]),
         ];
-        addHatParts(skull, hatId, 0.62);
+        addHatParts(skull, hatId, 0.60);
         add(headPivot, skull);
 
-        leftArm.position.set(-0.36, deckH + 1.28, 0);
-        rightArm.position.set(0.36, deckH + 1.28, 0);
+        leftArm.position.set(-0.38, deckH + 1.28, 0);
+        rightArm.position.set(0.38, deckH + 1.28, 0);
         leftLeg.position.set(-0.18, deckH + 0.6, 0.22);
         rightLeg.position.set(0.18, deckH + 0.6, -0.22);
         bodyPivot.add(leftArm, rightArm, leftLeg, rightLeg);
-        add(leftArm, [cyl(0.065, 0.06, 0.48, 6, pal.primary, [0, -0.24, 0]), octa(0.095, pal.primary, [0, -0.5, 0])]);
-        add(rightArm, [cyl(0.065, 0.06, 0.48, 6, pal.primary, [0, -0.24, 0]), octa(0.095, pal.primary, [0, -0.5, 0])]);
-        add(leftLeg, [cyl(0.075, 0.07, 0.46, 6, pal.primary, [0, -0.22, 0]), box(0.22, 0.14, 0.32, pal.boots, [0, -0.52, 0.04])]);
-        add(rightLeg, [cyl(0.075, 0.07, 0.46, 6, pal.primary, [0, -0.22, 0]), box(0.22, 0.14, 0.32, pal.boots, [0, -0.52, 0.04])]);
+        add(leftArm, [cyl(0.07, 0.06, 0.48, 7, pal.primary, [0, -0.24, 0]), octa(0.10, pal.primary, [0, -0.5, 0])]);
+        add(rightArm, [cyl(0.07, 0.06, 0.48, 7, pal.primary, [0, -0.24, 0]), octa(0.10, pal.primary, [0, -0.5, 0])]);
+        add(leftLeg, buildSculptedLegParts(pal.primary, pal.accent, pal.secondary, pal.boots));
+        add(rightLeg, buildSculptedLegParts(pal.primary, pal.accent, pal.secondary, pal.boots));
 
         weaponPivot.position.set(0.06, -0.44, 0.18);
         rightArm.add(weaponPivot);
         add(weaponPivot, [
-          cyl(0.07, 0.07, 0.72, 6, pal.weapon, [0, 0.25, 0.1], [0.4, 0, 0]),
-          octa(0.11, pal.weapon, [-0.07, 0.56, 0.24]),
-          octa(0.11, pal.weapon, [0.07, 0.56, 0.24]),
+          cyl(0.075, 0.075, 0.78, 7, pal.weapon, [0, 0.26, 0.1], [0.4, 0, 0]),
+          dodec(0.12, pal.weapon, [-0.08, 0.60, 0.25]),
+          dodec(0.12, pal.weapon, [0.08, 0.60, 0.25]),
         ]);
         break;
       }
 
       case 'SirOofie': {
+        // HEROIC SILVER-STEEL PLATE KNIGHT (athletic proportions, dark undersuit joints, silver helm & broadsword!)
         add(bodyPivot, [
-          box(0.84, 0.84, 0.54, pal.primary, [0, 1.08, 0]),
-          box(0.14, 0.44, 0.08, pal.accent, [0, 1.12, 0.28]),
-          box(0.38, 0.12, 0.08, pal.accent, [0, 1.18, 0.28]),
-          box(0.88, 0.14, 0.58, 0x3b4454, [0, 0.72, 0]),
-          box(0.22, 0.16, 0.12, pal.accent, [0, 0.72, 0.3]),
-          dodec(0.28, 0xb8c5d6, [-0.52, 1.4, 0]),
-          dodec(0.28, 0xb8c5d6, [0.52, 1.4, 0]),
+          // Tapered medieval silver-steel cuirass & hip fauld
+          lathePart(
+            [
+              [0.36, 0.72],
+              [0.29, 0.92],
+              [0.36, 1.24],
+              [0.42, 1.48],
+              [0.24, 1.58],
+            ],
+            8,
+            pal.primary,
+          ),
+          // Dark leather waist belt & iron buckle
+          lathePart([[0.32, 0.86], [0.34, 0.93], [0.32, 0.99]], 8, 0x2b2420),
+          box(0.14, 0.13, 0.09, pal.accent, [0, 0.93, 0.32]),
+          // Articulated front armored waist tasset lames
+          extrudePolyPart(
+            [[-0.17, 0], [0.17, 0], [0.14, -0.34], [0, -0.40], [-0.14, -0.34]],
+            0.05,
+            0.01,
+            pal.primary,
+            [0, 0.88, 0.30],
+          ),
+          // Clean layered curved steel pauldrons
+          dodec(0.19, pal.primary, [-0.42, 1.46, 0], undefined, [1.05, 0.85, 1.0]),
+          dodec(0.19, pal.primary, [0.42, 1.46, 0], undefined, [1.05, 0.85, 1.0]),
         ]);
-        headPivot.position.set(0, 1.54, 0);
+        headPivot.position.set(0, 1.60, 0);
         bodyPivot.add(headPivot);
         const head: ColoredPartSpec[] = [
-          cyl(0.36, 0.38, 0.64, 8, 0xb8c5d6, [0, 0.32, 0]),
-          cyl(0.37, 0.37, 0.1, 8, pal.accent, [0, 0.58, 0]),
-          box(0.46, 0.1, 0.1, 0x0f121a, [0, 0.36, 0.34]),
-          box(0.11, 0.32, 0.1, 0x0f121a, [0, 0.22, 0.34]),
-          box(0.14, 0.3, 0.56, pal.secondary, [0, 0.76, -0.06], [-0.25, 0, 0]),
-          cone(0.14, 0.38, 5, 0xff4d5e, [0, 0.68, -0.44], [-1.15, 0, 0]),
+          // Sleek rounded medieval silver great-helm / barbute with crisp dark eye slit!
+          lathePart([[0.22, 0.0], [0.27, 0.14], [0.28, 0.34], [0.24, 0.48], [0.12, 0.56]], 8, pal.primary),
+          box(0.34, 0.075, 0.10, 0x0b0e14, [0, 0.30, 0.25]),
+          box(0.06, 0.20, 0.09, 0x0b0e14, [0, 0.19, 0.25]),
         ];
-        addHatParts(head, hatId, 0.66);
+        addHatParts(head, hatId, 0.58);
         add(headPivot, head);
-        capePivot = new THREE.Group();
-        capePivot.position.set(0, 1.44, -0.28);
-        bodyPivot.add(capePivot);
-        add(capePivot, [
-          box(0.84, 1.12, 0.08, pal.secondary, [0, -0.54, -0.08], [0.16, 0, 0]),
-          box(0.88, 0.12, 0.09, pal.accent, [0, -1.06, -0.16], [0.16, 0, 0]),
-        ]);
-        leftArm.position.set(-0.56, 1.32, 0);
-        rightArm.position.set(0.56, 1.32, 0);
-        leftLeg.position.set(-0.22, 0.66, 0);
-        rightLeg.position.set(0.22, 0.66, 0);
-        bodyPivot.add(leftArm, rightArm, leftLeg, rightLeg);
-        add(leftArm, [box(0.24, 0.54, 0.24, pal.primary, [0, -0.26, 0]), box(0.26, 0.2, 0.26, 0x4f5d70, [0, -0.54, 0])]);
-        add(rightArm, [box(0.24, 0.54, 0.24, pal.primary, [0, -0.26, 0]), box(0.26, 0.2, 0.26, 0x4f5d70, [0, -0.54, 0])]);
-        add(leftLeg, [box(0.26, 0.46, 0.26, pal.primary, [0, -0.23, 0]), box(0.3, 0.22, 0.38, pal.boots, [0, -0.54, 0.06])]);
-        add(rightLeg, [box(0.26, 0.46, 0.26, pal.primary, [0, -0.23, 0]), box(0.3, 0.22, 0.38, pal.boots, [0, -0.54, 0.06])]);
 
-        weaponPivot.position.set(0.06, -0.48, 0.16);
+        attachStdLimbs(pal.primary, 0x3b4454, pal.primary, pal.boots, 0.40, 0.17, 0.74, 1.42);
+
+        // Crisp Knightly Steel Broadsword with golden crossguard & pommel!
+        weaponPivot.position.set(0.04, -0.58, 0.14);
         rightArm.add(weaponPivot);
         add(weaponPivot, [
-          cyl(0.055, 0.055, 0.42, 6, pal.secondary, [0, -0.05, 0.08], [0.35, 0, 0]),
-          octa(0.11, pal.accent, [0, -0.24, 0.01]),
-          box(0.64, 0.12, 0.16, pal.accent, [0, 0.18, 0.16], [0.35, 0, 0]),
-          box(0.28, 1.56, 0.09, pal.weapon, [0, 0.96, 0.44], [0.35, 0, 0]),
-          box(0.1, 1.44, 0.12, 0xffffff, [0, 0.96, 0.44], [0.35, 0, 0]),
-          cone(0.2, 0.42, 4, pal.weapon, [0, 1.84, 0.76], [0.35, Math.PI * 0.25, 0]),
+          cyl(0.045, 0.045, 0.36, 7, 0x3a2618, [0, -0.02, 0.08], [0.38, 0, 0]),
+          octa(0.085, pal.accent, [0, -0.20, 0.01]),
+          extrudePolyPart(
+            [[-0.30, 0.04], [0.30, 0.04], [0.22, -0.06], [0, -0.09], [-0.22, -0.06]],
+            0.09,
+            0.014,
+            pal.accent,
+            [0, 0.18, 0.15],
+            [0.38, 0, 0],
+          ),
+          extrudePolyPart(
+            [[-0.12, 0.0], [0.12, 0.0], [0.095, 1.28], [0.0, 1.62], [-0.095, 1.28]],
+            0.05,
+            0.016,
+            pal.weapon,
+            [0, 0.20, 0.16],
+            [0.38, 0, 0],
+          ),
         ]);
         break;
       }
@@ -1528,48 +1531,65 @@ export class ProceduralLowPolyPack implements IAssetPack {
       }
 
       case 'Cl4nk': {
-        // Chunky boxy retro robot w/ glowing cyan CRT visor, antenna & Revolver!
+        // SLEEK COBALT-BLUE COWBOY GUNSLINGER AUTOMATON (wide brown cowboy hat, fluttering black cape, boots & twin revolvers!)
         add(bodyPivot, [
-          box(0.76, 0.78, 0.54, pal.primary, [0, 1.06, 0]),
-          box(0.54, 0.42, 0.08, pal.secondary, [0, 1.12, 0.28]),
-          box(0.14, 0.14, 0.1, pal.accent, [-0.14, 1.14, 0.32]),
-          box(0.22, 0.08, 0.1, 0xff4d5e, [0.1, 1.14, 0.32]),
-          box(0.62, 0.2, 0.42, pal.secondary, [0, 0.64, 0]),
-          // Back battery pack
-          box(0.46, 0.52, 0.24, pal.secondary, [0, 1.1, -0.36]),
+          // Athletic tapered royal-blue automaton torso + silver chest rib-core
+          lathePart(
+            [
+              [0.30, 0.74],
+              [0.24, 0.96],
+              [0.34, 1.32],
+              [0.38, 1.48],
+              [0.20, 1.56],
+            ],
+            8,
+            pal.primary,
+          ),
+          box(0.34, 0.30, 0.08, 0x9ecbff, [0, 1.24, 0.30]),
+          // Cowboy leather gunbelt + gleaming gold buckle + hip holster!
+          lathePart([[0.30, 0.84], [0.32, 0.92], [0.30, 0.98]], 8, pal.skin),
+          box(0.15, 0.13, 0.09, 0xf5c542, [0, 0.91, 0.30]),
+          box(0.14, 0.26, 0.18, pal.skin, [-0.30, 0.78, 0.06], [0.18, 0, 0.14]),
+          // Metallic cyan-blue shoulder joints
+          dodec(0.15, pal.accent, [-0.38, 1.42, 0]),
+          dodec(0.15, pal.accent, [0.38, 1.42, 0]),
         ]);
-        headPivot.position.set(0, 1.5, 0);
+        headPivot.position.set(0, 1.56, 0);
         bodyPivot.add(headPivot);
         const head: ColoredPartSpec[] = [
-          cyl(0.14, 0.16, 0.16, 6, pal.secondary, [0, 0.08, 0]),
-          box(0.66, 0.52, 0.52, pal.primary, [0, 0.38, 0]),
-          // Glowing retro cyan CRT visor screen!
-          box(0.54, 0.26, 0.08, 0x0f172a, [0, 0.4, 0.26]),
-          box(0.46, 0.18, 0.09, pal.accent, [0, 0.4, 0.27]),
-          // Side bolt ears + top antenna
-          cyl(0.11, 0.11, 0.12, 6, pal.secondary, [-0.38, 0.38, 0], [0, 0, Math.PI * 0.5]),
-          cyl(0.11, 0.11, 0.12, 6, pal.secondary, [0.38, 0.38, 0], [0, 0, Math.PI * 0.5]),
-          cyl(0.035, 0.04, 0.36, 5, pal.secondary, [0, 0.8, 0]),
-          octa(0.09, pal.accent, [0, 1.0, 0]),
+          // Sleek cobalt robotic head + glowing sky-cyan eye visor
+          lathePart([[0.16, 0.0], [0.24, 0.12], [0.26, 0.28], [0.22, 0.44]], 8, pal.primary),
+          box(0.32, 0.10, 0.08, 0x0d1526, [0, 0.26, 0.24]),
+          box(0.26, 0.06, 0.09, pal.accent, [0, 0.26, 0.25]),
+          // Iconic Wide-Brimmed Leather Cowboy Hat!
+          cyl(0.56, 0.58, 0.055, 10, pal.skin, [0, 0.42, 0.0], [0.06, 0, 0]),
+          cyl(0.24, 0.30, 0.26, 8, pal.skin, [0, 0.56, -0.02], [0.06, 0, 0]),
+          cyl(0.31, 0.31, 0.065, 8, 0x261710, [0, 0.46, -0.01], [0.06, 0, 0]),
+          box(0.09, 0.06, 0.05, 0xf5c542, [0, 0.46, 0.30]),
         ];
-        addHatParts(head, hatId, 0.66);
+        addHatParts(head, hatId, 0.72);
         add(headPivot, head);
-        leftArm.position.set(-0.5, 1.32, 0);
-        rightArm.position.set(0.5, 1.32, 0);
-        leftLeg.position.set(-0.22, 0.58, 0);
-        rightLeg.position.set(0.22, 0.58, 0);
-        bodyPivot.add(leftArm, rightArm, leftLeg, rightLeg);
-        add(leftArm, [box(0.2, 0.52, 0.2, pal.secondary, [0, -0.26, 0]), box(0.22, 0.18, 0.22, pal.primary, [0, -0.54, 0])]);
-        add(rightArm, [box(0.2, 0.52, 0.2, pal.secondary, [0, -0.26, 0]), box(0.22, 0.18, 0.22, pal.primary, [0, -0.54, 0])]);
-        add(leftLeg, [box(0.2, 0.44, 0.22, pal.secondary, [0, -0.2, 0]), box(0.28, 0.18, 0.38, pal.boots, [0, -0.48, 0.06])]);
-        add(rightLeg, [box(0.2, 0.44, 0.22, pal.secondary, [0, -0.2, 0]), box(0.28, 0.18, 0.38, pal.boots, [0, -0.48, 0.06])]);
 
-        weaponPivot.position.set(0.04, -0.44, 0.22);
+        // Fluttering deep-charcoal outlaw cape / gunslinger poncho!
+        capePivot = new THREE.Group();
+        capePivot.position.set(0, 1.46, -0.24);
+        bodyPivot.add(capePivot);
+        add(capePivot, buildSculptedCapeParts(0x131720, 0x242b38, 0.76, 0.92));
+
+        attachStdLimbs(pal.primary, 0x1d2536, pal.primary, pal.boots, 0.39, 0.16, 0.74, 1.42);
+
+        // Twin Gunslinger Revolvers (right hand drawn + left hand secondary iron!)
+        add(leftArm, [
+          box(0.09, 0.20, 0.12, pal.skin, [0, -0.60, 0.14]),
+          cyl(0.085, 0.085, 0.20, 6, pal.weapon, [0, -0.48, 0.28], [Math.PI * 0.5, 0, 0]),
+          box(0.08, 0.10, 0.44, 0x364152, [0, -0.46, 0.52]),
+        ]);
+        weaponPivot.position.set(0.04, -0.58, 0.14);
         rightArm.add(weaponPivot);
         add(weaponPivot, [
-          box(0.12, 0.24, 0.14, 0x6e4326, [0, -0.06, 0]),
-          cyl(0.11, 0.11, 0.24, 6, pal.weapon, [0, 0.12, 0.18], [Math.PI * 0.5, 0, 0]),
-          box(0.1, 0.12, 0.56, pal.weapon, [0, 0.16, 0.48]),
+          box(0.09, 0.20, 0.12, pal.skin, [0, -0.04, 0]),
+          cyl(0.09, 0.09, 0.22, 6, pal.weapon, [0, 0.10, 0.16], [Math.PI * 0.5, 0, 0]),
+          box(0.08, 0.11, 0.52, 0x364152, [0, 0.13, 0.44]),
         ]);
         break;
       }
@@ -1607,87 +1627,144 @@ export class ProceduralLowPolyPack implements IAssetPack {
       }
 
       case 'Monke': {
-        // Chunky primate with rounded ears, tan muzzle, jungle vest, curled monkey tail & Bananarang!
+        // ICONIC MUSCULAR GORILLA-APE HERO: broad dark-brown shoulders, tan sculpted pecs, charcoal pants,
+        // HUGE LONG hanging ape arms with big tan knuckle-fists, tan feet, expressive muzzle & thick BLACK SUNGLASSES!
         add(bodyPivot, [
-          dodec(0.46, pal.primary, [0, 1.02, 0], undefined, [1.05, 1.1, 0.92]),
-          box(0.68, 0.56, 0.48, pal.secondary, [0, 1.08, 0.04]),
-          box(0.34, 0.46, 0.1, pal.skin, [0, 1.04, 0.28]),
+          // Broad muscular V-tapered ape upper torso & rounded hunched back
+          lathePart(
+            [
+              [0.34, 0.72],
+              [0.36, 0.92],
+              [0.48, 1.24],
+              [0.54, 1.46],
+              [0.38, 1.56],
+            ],
+            8,
+            pal.primary,
+            [0, 0, -0.02],
+            [0.10, 0, 0],
+          ),
+          // Sculpted tan bare chest pecs!
+          dodec(0.26, pal.skin, [-0.14, 1.26, 0.26], undefined, [1.0, 0.85, 0.65]),
+          dodec(0.26, pal.skin, [0.14, 1.26, 0.26], undefined, [1.0, 0.85, 0.65]),
+          box(0.38, 0.34, 0.16, pal.skin, [0, 1.06, 0.26]),
+          // Charcoal-grey primate trousers & dark waistband
+          lathePart([[0.37, 0.64], [0.38, 0.84], [0.35, 0.92]], 8, pal.secondary),
+          box(0.68, 0.08, 0.54, 0x1a1e26, [0, 0.88, 0]),
         ]);
-        headPivot.position.set(0, 1.52, 0.04);
+        headPivot.position.set(0, 1.48, 0.14);
         bodyPivot.add(headPivot);
         const head: ColoredPartSpec[] = [
-          dodec(0.38, pal.primary, [0, 0.26, 0]),
-          // Rounded monkey ears
-          cyl(0.15, 0.15, 0.08, 7, pal.primary, [-0.38, 0.28, 0], [Math.PI * 0.5, 0, 0]),
-          cyl(0.09, 0.09, 0.1, 7, pal.skin, [-0.38, 0.28, 0.01], [Math.PI * 0.5, 0, 0]),
-          cyl(0.15, 0.15, 0.08, 7, pal.primary, [0.38, 0.28, 0], [Math.PI * 0.5, 0, 0]),
-          cyl(0.09, 0.09, 0.1, 7, pal.skin, [0.38, 0.28, 0.01], [Math.PI * 0.5, 0, 0]),
-          // Expressive tan primate face & muzzle
-          dodec(0.24, pal.skin, [0, 0.18, 0.24], undefined, [1.15, 0.85, 0.85]),
-          box(0.1, 0.1, 0.06, 0x14161f, [-0.13, 0.31, 0.33]),
-          box(0.1, 0.1, 0.06, 0x14161f, [0.13, 0.31, 0.33]),
-          box(0.2, 0.05, 0.05, 0x3b2214, [0, 0.12, 0.44]),
+          // Sculpted primate cranium & heavy brow
+          dodec(0.34, pal.primary, [0, 0.28, -0.02], undefined, [1.05, 1.0, 1.02]),
+          // Rounded ape ears with tan inner cups
+          cyl(0.12, 0.12, 0.07, 7, pal.primary, [-0.34, 0.28, 0.02], [Math.PI * 0.5, 0, 0]),
+          cyl(0.08, 0.08, 0.085, 7, pal.skin, [-0.34, 0.28, 0.04], [Math.PI * 0.5, 0, 0]),
+          cyl(0.12, 0.12, 0.07, 7, pal.primary, [0.34, 0.28, 0.02], [Math.PI * 0.5, 0, 0]),
+          cyl(0.08, 0.08, 0.085, 7, pal.skin, [0.34, 0.28, 0.04], [Math.PI * 0.5, 0, 0]),
+          // Wide expressive tan muzzle with cheeky smile & nostrils!
+          dodec(0.27, pal.skin, [0, 0.16, 0.22], undefined, [1.18, 0.84, 0.92]),
+          box(0.24, 0.035, 0.04, 0x5c361a, [0, 0.11, 0.45]),
+          box(0.045, 0.035, 0.04, 0x3b2210, [-0.055, 0.22, 0.46]),
+          box(0.045, 0.035, 0.04, 0x3b2210, [0.055, 0.22, 0.46]),
+          // THICK SHINY BLACK SUNGLASSES with crisp white glint pixels!
+          box(0.56, 0.16, 0.12, 0x0b0d12, [0, 0.31, 0.32]),
+          box(0.20, 0.11, 0.135, 0x161b26, [-0.14, 0.30, 0.33]),
+          box(0.20, 0.11, 0.135, 0x161b26, [0.14, 0.30, 0.33]),
+          box(0.05, 0.04, 0.145, 0xffffff, [-0.09, 0.33, 0.335]),
+          box(0.05, 0.04, 0.145, 0xffffff, [0.19, 0.33, 0.335]),
         ];
         addHatParts(head, hatId, 0.62);
         add(headPivot, head);
 
-        // Articulated curled monkey tail!
-        tailPivot = new THREE.Group();
-        tailPivot.position.set(0, 0.78, -0.34);
-        bodyPivot.add(tailPivot);
-        add(tailPivot, [
-          cyl(0.075, 0.085, 0.58, 6, pal.primary, [0, 0.05, -0.26], [1.4, 0, 0]),
-          cyl(0.065, 0.075, 0.52, 6, pal.primary, [0, 0.26, -0.64], [0.55, 0, 0]),
-          dodec(0.12, pal.primary, [0, 0.54, -0.74]),
-        ]);
-        attachStdLimbs(pal.primary, pal.skin, pal.primary, pal.boots, 0.46, 0.2, 0.6, 1.32);
-        weaponPivot.position.set(0.06, -0.44, 0.2);
+        // Long powerful hanging ape arms reaching down to knees with huge tan hands!
+        leftArm.position.set(-0.52, 1.38, 0.02);
+        rightArm.position.set(0.52, 1.38, 0.02);
+        leftLeg.position.set(-0.22, 0.66, 0);
+        rightLeg.position.set(0.22, 0.66, 0);
+        bodyPivot.add(leftArm, rightArm, leftLeg, rightLeg);
+        const buildApeArm = (sign: -1 | 1): ColoredPartSpec[] => [
+          dodec(0.21, pal.primary, [0, 0, 0]),
+          cyl(0.16, 0.15, 0.56, 7, pal.primary, [sign * 0.04, -0.28, 0.04], [-0.10, 0, sign * 0.08]),
+          cyl(0.16, 0.14, 0.52, 7, pal.primary, [sign * 0.07, -0.74, 0.12], [-0.22, 0, sign * 0.04]),
+          // Huge chunky tan ape fist + inner thumb!
+          box(0.28, 0.26, 0.30, pal.skin, [sign * 0.07, -1.04, 0.22]),
+          box(0.12, 0.14, 0.16, pal.skin, [-sign * 0.08, -1.02, 0.26]),
+        ];
+        add(leftArm, buildApeArm(-1));
+        add(rightArm, buildApeArm(1));
+        const buildApeLeg = (): ColoredPartSpec[] => [
+          cyl(0.16, 0.14, 0.34, 7, pal.secondary, [0, -0.16, 0.02], [-0.14, 0, 0]),
+          cyl(0.14, 0.12, 0.30, 7, pal.secondary, [0, -0.44, -0.02], [0.16, 0, 0]),
+          // Broad tan ape foot!
+          box(0.28, 0.14, 0.38, pal.boots, [0, -0.60, 0.08]),
+        ];
+        add(leftLeg, buildApeLeg());
+        add(rightLeg, buildApeLeg());
+
+        weaponPivot.position.set(0.08, -1.02, 0.26);
         rightArm.add(weaponPivot);
         // Oversized golden Bananarang!
         add(weaponPivot, [
-          torus(0.42, 0.1, 5, 10, pal.weapon, [0, 0.2, 0.2], [0.2, 0.4, 0.6], undefined, Math.PI * 0.85),
-          box(0.1, 0.1, 0.1, 0x4f3018, [0.36, 0.4, 0.26]),
+          torus(0.42, 0.1, 5, 10, pal.weapon, [0, 0.18, 0.2], [0.2, 0.4, 0.6], undefined, Math.PI * 0.85),
+          box(0.1, 0.1, 0.1, 0x4f3018, [0.36, 0.38, 0.26]),
         ]);
         break;
       }
 
       case 'Ninja': {
-        // Sleek shinobi armor + flowing crimson scarf + razor curved Katana!
+        // SLEEK ATHLETIC SHINOBI (charcoal stealth suit, dark-blue sash, wrapped shinobi boots & curved silver Katana!)
         add(bodyPivot, [
-          cyl(0.32, 0.38, 0.86, 7, pal.primary, [0, 1.04, 0]),
-          box(0.56, 0.44, 0.42, pal.secondary, [0, 1.14, 0]),
-          cyl(0.38, 0.39, 0.14, 7, pal.accent, [0, 0.74, 0]),
-          cyl(0.38, 0.38, 0.16, 8, pal.accent, [0, 1.44, 0.02]), // crimson neck scarf
+          lathePart(
+            [
+              [0.32, 0.72],
+              [0.25, 0.94],
+              [0.34, 1.32],
+              [0.37, 1.48],
+              [0.22, 1.56],
+            ],
+            8,
+            pal.primary,
+          ),
+          // Diagonal stealth chest harness & indigo waist obi sash
+          box(0.10, 0.62, 0.36, pal.secondary, [0, 1.24, 0.02], [0, 0, 0.56]),
+          lathePart([[0.31, 0.84], [0.33, 0.92], [0.31, 0.98]], 8, pal.accent),
+          lathePart([[0.22, 1.54], [0.30, 1.46], [0.28, 1.40]], 8, pal.secondary),
         ]);
-        headPivot.position.set(0, 1.52, 0);
+        headPivot.position.set(0, 1.56, 0.02);
         bodyPivot.add(headPivot);
         const head: ColoredPartSpec[] = [
-          dodec(0.36, pal.primary, [0, 0.26, 0]),
-          box(0.36, 0.14, 0.1, pal.skin, [0, 0.29, 0.3]),
-          box(0.1, 0.07, 0.07, 0x111521, [-0.11, 0.29, 0.35]),
-          box(0.1, 0.07, 0.07, 0x111521, [0.11, 0.29, 0.35]),
-          // Headband + metallic shinobi forehead plate
-          cyl(0.37, 0.37, 0.1, 8, pal.accent, [0, 0.41, 0]),
-          box(0.28, 0.12, 0.07, 0xcbd5e1, [0, 0.41, 0.35]),
+          lathePart([[0.18, 0.0], [0.26, 0.14], [0.27, 0.32], [0.22, 0.46], [0.10, 0.52]], 8, pal.primary),
+          // Narrow fierce shinobi eye slit across hood mask
+          box(0.30, 0.095, 0.08, pal.skin, [0, 0.27, 0.24]),
+          box(0.08, 0.05, 0.09, 0x0d1018, [-0.09, 0.27, 0.25]),
+          box(0.08, 0.05, 0.09, 0x0d1018, [0.09, 0.27, 0.25]),
+          cyl(0.28, 0.28, 0.075, 8, pal.accent, [0, 0.37, 0]),
         ];
-        addHatParts(head, hatId, 0.62);
+        addHatParts(head, hatId, 0.54);
         add(headPivot, head);
-        // Dramatic flowing crimson ninja scarf tail!
         capePivot = new THREE.Group();
-        capePivot.position.set(0, 1.42, -0.26);
+        capePivot.position.set(0, 1.48, -0.22);
         bodyPivot.add(capePivot);
         add(capePivot, [
-          box(0.28, 1.08, 0.06, pal.accent, [-0.08, -0.5, -0.14], [0.32, 0, 0.12]),
-          box(0.22, 0.88, 0.06, 0xff5c77, [0.12, -0.44, -0.1], [0.24, 0, -0.14]),
+          box(0.16, 0.86, 0.05, pal.accent, [-0.06, -0.40, -0.10], [0.28, 0, 0.12]),
+          box(0.12, 0.70, 0.05, pal.secondary, [0.08, -0.34, -0.08], [0.22, 0, -0.14]),
         ]);
-        attachStdLimbs(pal.primary, 0x141824, pal.primary, pal.boots, 0.42, 0.18, 0.62, 1.32);
-        weaponPivot.position.set(0.05, -0.46, 0.16);
+        attachStdLimbs(pal.primary, 0x141824, pal.primary, pal.boots, 0.38, 0.16, 0.74, 1.42);
+        weaponPivot.position.set(0.04, -0.58, 0.14);
         rightArm.add(weaponPivot);
         add(weaponPivot, [
-          cyl(0.045, 0.045, 0.42, 6, pal.accent, [0, -0.04, 0.06], [0.42, 0, 0]),
-          cyl(0.14, 0.14, 0.05, 8, 0xffd23f, [0, 0.16, 0.15], [0.42, 0, 0]),
-          box(0.08, 1.62, 0.12, pal.weapon, [0, 0.94, 0.5], [0.42, 0, 0]),
-          box(0.05, 1.56, 0.05, pal.weaponGlow, [0, 0.94, 0.56], [0.42, 0, 0]),
+          cyl(0.036, 0.036, 0.38, 6, pal.accent, [0, -0.04, 0.06], [0.48, 0, 0]),
+          cyl(0.11, 0.11, 0.045, 8, 0xd4a437, [0, 0.14, 0.15], [0.48, 0, 0]),
+          // Razor-sharp bright silver curved Katana blade!
+          extrudePolyPart(
+            [[-0.045, 0.0], [0.045, 0.0], [0.06, 0.92], [0.01, 1.56], [-0.04, 1.42], [-0.025, 0.78]],
+            0.028,
+            0.008,
+            pal.weapon,
+            [0, 0.18, 0.17],
+            [0.48, 0, 0],
+          ),
         ]);
         break;
       }
@@ -1939,49 +2016,83 @@ export class ProceduralLowPolyPack implements IAssetPack {
       }
 
       case 'Vlad': {
-        // High-collar crimson Vampire Lord w/ fangs, velvet cape & Blood Magic chalice staff!
+        // SCULPTED GOTHIC VAMPIRE LORD — dramatic flared baroque coat, jagged high crimson collar & blood chalice!
         hoverMode = 'float';
         add(bodyPivot, [
-          cyl(0.34, 0.44, 0.9, 7, pal.primary, [0, 1.04, 0]),
-          box(0.32, 0.62, 0.1, pal.secondary, [0, 1.1, 0.26]),
-          box(0.14, 0.22, 0.12, 0xffffff, [0, 1.38, 0.28]),
-          octa(0.09, pal.accent, [0, 1.34, 0.34]),
-          // Dramatic tall flared high vampire collar!
-          box(0.76, 0.48, 0.1, pal.primary, [0, 1.62, -0.24], [-0.28, 0, 0]),
-          box(0.64, 0.42, 0.08, pal.secondary, [0, 1.62, -0.2], [-0.28, 0, 0]),
-          box(0.12, 0.44, 0.34, pal.primary, [-0.38, 1.6, -0.08], [0, 0.22, 0.24]),
-          box(0.12, 0.44, 0.34, pal.primary, [0.38, 1.6, -0.08], [0, -0.22, -0.24]),
+          lathePart(
+            [
+              [0.54, 0.48],
+              [0.40, 0.76],
+              [0.32, 1.02],
+              [0.42, 1.38],
+              [0.30, 1.52],
+            ],
+            10,
+            pal.primary,
+          ),
+          box(0.28, 0.64, 0.10, pal.secondary, [0, 1.12, 0.32]),
+          box(0.14, 0.24, 0.12, 0xf7eed8, [0, 1.40, 0.34]),
+          octa(0.095, pal.accent, [0, 1.34, 0.40]),
+          // Dramatic sculpted bat-wing gothic high collar!
+          extrudePolyPart(
+            [
+              [-0.44, 0.0],
+              [0.44, 0.0],
+              [0.58, 0.56],
+              [0.24, 0.48],
+              [0.0, 0.62],
+              [-0.24, 0.48],
+              [-0.58, 0.56],
+            ],
+            0.07,
+            0.015,
+            pal.primary,
+            [0, 1.42, -0.22],
+            [-0.26, 0, 0],
+          ),
+          extrudePolyPart(
+            [
+              [-0.36, 0.04],
+              [0.36, 0.04],
+              [0.46, 0.48],
+              [0.0, 0.52],
+              [-0.46, 0.48],
+            ],
+            0.05,
+            0.01,
+            pal.secondary,
+            [0, 1.44, -0.17],
+            [-0.26, 0, 0],
+          ),
         ]);
         headPivot.position.set(0, 1.54, 0.04);
         bodyPivot.add(headPivot);
         const head: ColoredPartSpec[] = [
-          dodec(0.34, pal.skin, [0, 0.26, 0]),
-          // Slick black widow's-peak vampire hair
-          dodec(0.36, 0x120d17, [0, 0.36, -0.06], undefined, [1.05, 0.85, 1.0]),
-          cone(0.12, 0.2, 3, 0x120d17, [0, 0.46, 0.28], [Math.PI, 0, 0]),
-          // Glowing crimson vampire eyes & sharp white fangs!
-          box(0.11, 0.08, 0.06, pal.accent, [-0.12, 0.28, 0.31]),
-          box(0.11, 0.08, 0.06, pal.accent, [0.12, 0.28, 0.31]),
+          lathePart([[0.16, 0.02], [0.32, 0.18], [0.34, 0.36], [0.24, 0.52]], 10, pal.skin),
+          // Swept aristocratic black hair with widow's peak
+          dodec(0.36, 0x100b18, [0, 0.38, -0.06], undefined, [1.05, 0.85, 1.05]),
+          cone(0.12, 0.22, 3, 0x100b18, [0, 0.48, 0.28], [Math.PI, 0, 0]),
           cone(0.035, 0.11, 3, 0xffffff, [-0.07, 0.12, 0.32], [Math.PI, 0, 0]),
           cone(0.035, 0.11, 3, 0xffffff, [0.07, 0.12, 0.32], [Math.PI, 0, 0]),
         ];
         addHatParts(head, hatId, 0.64);
         add(headPivot, head);
+        addGlowOrb(headPivot, new THREE.BoxGeometry(0.11, 0.07, 0.06), [-0.12, 0.28, 0.32]);
+        addGlowOrb(headPivot, new THREE.BoxGeometry(0.11, 0.07, 0.06), [0.12, 0.28, 0.32]);
+
         capePivot = new THREE.Group();
         capePivot.position.set(0, 1.44, -0.28);
         bodyPivot.add(capePivot);
-        add(capePivot, [
-          box(0.92, 1.24, 0.07, pal.primary, [0, -0.6, -0.08], [0.16, 0, 0]),
-          box(0.78, 1.14, 0.06, pal.secondary, [0, -0.58, -0.04], [0.16, 0, 0]),
-        ]);
+        add(capePivot, buildSculptedCapeParts(pal.primary, pal.secondary, 1.02, 1.32));
         attachStdLimbs(pal.primary, pal.skin, pal.primary, pal.boots, 0.46, 0.19, 0.62, 1.34);
+
         weaponPivot.position.set(0.05, -0.44, 0.18);
         rightArm.add(weaponPivot);
         add(weaponPivot, [
-          cyl(0.045, 0.055, 1.75, 6, 0x2a1426, [0, 0.34, 0.14], [0.22, 0, 0]),
-          torus(0.2, 0.045, 5, 8, pal.secondary, [0, 1.26, 0.34]),
+          lathePart([[0.03, -0.5], [0.055, 0.3], [0.07, 1.05], [0.12, 1.18]], 8, 0x261224, [0, 0.28, 0.14], [0.22, 0, 0]),
+          torus(0.24, 0.042, 6, 12, pal.secondary, [0, 1.32, 0.36]),
         ]);
-        addGlowOrb(weaponPivot, new THREE.OctahedronGeometry(0.2, 0), [0, 1.26, 0.34]);
+        addGlowOrb(weaponPivot, new THREE.OctahedronGeometry(0.20, 1), [0, 1.32, 0.36]);
         break;
       }
     }
@@ -2019,6 +2130,8 @@ export class ProceduralLowPolyPack implements IAssetPack {
   // ---- 4 DEDICATED ARTICULATED BOSS RIGS ----
 
   public buildEntBossRig(tier = 1): ArticulatedBossRig {
+    // TOWERING GNARLED BARK-GOLEM ENT GIANT (two rooted wooden legs, V-tapered bark torso,
+    // carved scowling wooden face with glowing bright CYAN eyes, spiked shoulder branches & colossal blocky fists!)
     const root = new THREE.Group();
     const leftArm = new THREE.Group();
     const rightArm = new THREE.Group();
@@ -2030,80 +2143,104 @@ export class ProceduralLowPolyPack implements IAssetPack {
 
     const isT2 = tier === 2;
     const isT3 = tier >= 3;
-    const trunkCol = isT3 ? 0x3b2220 : isT2 ? 0x453559 : 0x734a2e;
-    const trunkDark = isT3 ? 0x261414 : isT2 ? 0x302342 : 0x5c3822;
-    const leafCol = isT3 ? 0xc9302c : isT2 ? 0x6f42c1 : 0x4ca63d;
-    const leafBright = isT3 ? 0xff621f : isT2 ? 0xa855f7 : 0x76cf4a;
-    const eyeHex = isT3 ? 0xff2644 : isT2 ? 0xd946ef : 0xffb703;
+    const barkLight = isT3 ? 0x6e3a28 : isT2 ? 0x5c4c70 : 0x826033;
+    const barkMid = isT3 ? 0x52291c : isT2 ? 0x453759 : 0x634723;
+    const barkDark = isT3 ? 0x361914 : isT2 ? 0x2f2440 : 0x422e16;
+    const mossCol = isT3 ? 0xb83824 : isT2 ? 0x6945a8 : 0x46732a;
+    const eyeHex = isT3 ? 0xff2e44 : isT2 ? 0x6ef7ff : 0x00f5ff;
 
     const barkMat = createMkToonMaterial({
       color: 0xffffff,
       map: this.textures.bark_grain,
-      mapStrength: 0.65,
+      mapStrength: 0.90,
       vertexColors: true,
-      rimStrength: 0.36,
+      rimStrength: 0.24,
       rimColor: eyeHex,
     });
     const eyeMat = createMkToonMaterial({
       color: eyeHex,
       emissive: eyeHex,
-      emissiveIntensity: 1.4,
-      rimStrength: 0.5,
-      rimColor: 0xfff4c2,
+      emissiveIntensity: 1.65,
+      rimStrength: 0.45,
+      rimColor: 0xffffff,
     });
-    const outlineMat = createOutlineMaterial(0.085, 0x0b0d14);
+    const outlineMat = createOutlineMaterial(0.068, 0x090a0e);
     toonMaterials.push(barkMat, eyeMat);
     extraMaterials.push(outlineMat);
 
     const add = (p: THREE.Object3D, parts: readonly ColoredPartSpec[]) =>
       attachOutlinedParts(p, parts, barkMat, outlineMat, outlines, geometriesToDispose);
 
+    // Muscular humanoid wooden legs with splayed tree-root feet + chunky waist block + broad V-tapered bark torso!
     add(root, [
-      cyl(1.15, 1.55, 3.6, 8, trunkCol, [0, 2.2, 0]),
-      cyl(1.45, 1.25, 1.35, 8, trunkDark, [0, 3.85, 0.1]),
-      cone(0.65, 1.8, 6, trunkDark, [-0.95, 0.72, 0.65], [0.45, 0, 0.42]),
-      cone(0.65, 1.8, 6, trunkDark, [0.95, 0.72, 0.65], [0.45, 0, -0.42]),
-      cone(0.62, 1.75, 6, trunkDark, [-0.85, 0.72, -0.75], [-0.45, 0, 0.38]),
-      cone(0.62, 1.75, 6, trunkDark, [0.85, 0.72, -0.75], [-0.45, 0, -0.38]),
-      box(1.65, 0.42, 0.62, trunkDark, [0, 3.55, 1.15]),
-      box(1.05, 0.68, 0.45, 0x160e0d, [0, 2.55, 1.12]),
-      dodec(0.75, leafCol, [-1.25, 4.1, 0.15]),
-      dodec(0.75, leafCol, [1.25, 4.1, 0.15]),
+      // Left rooted tree-trunk leg (foot -> shin -> thigh)
+      box(0.95, 0.45, 1.35, barkDark, [-0.92, 0.22, 0.14]),
+      cone(0.32, 0.85, 5, barkDark, [-1.25, 0.22, 0.65], [0.95, 0, 0.5]),
+      box(0.86, 1.55, 0.92, barkMid, [-0.90, 1.15, 0.04], [-0.08, 0, 0.05]),
+      box(0.92, 1.45, 0.98, barkLight, [-0.84, 2.45, 0.08], [0.06, 0, -0.04]),
+      // Right rooted tree-trunk leg
+      box(0.95, 0.45, 1.35, barkDark, [0.92, 0.22, 0.14]),
+      cone(0.32, 0.85, 5, barkDark, [1.25, 0.22, 0.65], [0.95, 0, -0.5]),
+      box(0.86, 1.55, 0.92, barkMid, [0.90, 1.15, 0.04], [-0.08, 0, -0.05]),
+      box(0.92, 1.45, 0.98, barkLight, [0.84, 2.45, 0.08], [0.06, 0, 0.04]),
+      // Chunky carved wooden pelvis & waist
+      box(2.15, 0.85, 1.28, barkDark, [0, 3.32, 0.0]),
+      // Broad muscular V-tapered gnarled bark chest & shoulders!
+      box(2.85, 2.35, 1.65, barkLight, [0, 4.82, 0.05]),
+      box(3.45, 1.35, 1.55, barkMid, [0, 5.55, 0.0]),
+      // Mossy shoulder bark ridges
+      box(1.15, 0.36, 1.25, mossCol, [-1.18, 6.26, -0.05], [0, 0, 0.16]),
+      box(1.15, 0.36, 1.25, mossCol, [1.18, 6.26, -0.05], [0, 0, -0.16]),
+      // Towering carved wooden scowling rectangular Ent Head inset into chest/shoulders!
+      box(1.62, 2.15, 1.35, barkLight, [0, 5.55, 0.72]),
+      box(1.78, 0.42, 0.56, barkDark, [0, 6.08, 1.26]), // heavy angry carved brow
+      box(1.18, 0.58, 0.42, 0x160e0a, [0, 5.05, 1.26]), // deep carved scowling mouth
+      box(0.96, 0.16, 0.48, barkMid, [0, 5.26, 1.26]), // wooden tooth lip
+      // Mossy forehead crown ridges
+      box(0.54, 0.46, 0.52, mossCol, [-0.42, 6.66, 0.65], [0, 0, 0.25]),
+      box(0.54, 0.46, 0.52, mossCol, [0.42, 6.66, 0.65], [0, 0, -0.25]),
     ]);
 
-    const eyeGeo = new THREE.BoxGeometry(0.36, 0.24, 0.22);
+    // Glowing fierce bright CYAN triangular/angled eyes!
+    const eyeGeo = new THREE.BoxGeometry(0.36, 0.24, 0.18);
     geometriesToDispose.push(eyeGeo);
     const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-    leftEye.position.set(-0.46, 3.22, 1.3);
+    leftEye.position.set(-0.42, 5.78, 1.38);
+    leftEye.rotation.z = -0.18;
     const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-    rightEye.position.set(0.46, 3.22, 1.3);
+    rightEye.position.set(0.42, 5.78, 1.38);
+    rightEye.rotation.z = 0.18;
     root.add(leftEye, rightEye);
 
-    crownGroup.position.set(0, 4.45, 0);
+    // Jagged sprouting gnarled branch-antler spikes rising dramatically from shoulders & back!
+    crownGroup.position.set(0, 6.15, -0.15);
     root.add(crownGroup);
     add(crownGroup, [
-      dodec(1.85, leafCol, [0, 0.7, 0], undefined, [1.25, 0.82, 1.15]),
-      dodec(1.35, leafBright, [-1.1, 0.55, 0.4]),
-      dodec(1.35, leafBright, [1.1, 0.6, -0.3]),
-      dodec(1.2, leafBright, [0, 1.45, 0.2]),
-      cone(0.42, 0.32, 6, eyeHex, [-0.8, 1.45, 0.85]),
-      cone(0.36, 0.28, 6, eyeHex, [0.95, 1.25, 0.7]),
+      cone(0.34, 2.35, 5, barkDark, [-1.45, 1.05, -0.15], [-0.15, 0, 0.48]),
+      cone(0.24, 1.75, 5, barkMid, [-2.45, 0.52, 0.05], [-0.10, 0, 0.92]),
+      cone(0.34, 2.25, 5, barkDark, [1.45, 0.98, -0.15], [-0.15, 0, -0.48]),
+      cone(0.22, 1.55, 5, barkMid, [2.35, 0.48, 0.05], [-0.10, 0, -0.88]),
+      cone(0.26, 1.50, 5, mossCol, [0.0, 0.95, -0.45], [-0.35, 0, 0]),
     ]);
 
-    leftArm.position.set(-1.55, 3.65, 0.15);
-    rightArm.position.set(1.55, 3.65, 0.15);
+    // COLOSSAL LONG TREE-TRUNK ARMS ending in massive blocky wooden fists!
+    leftArm.position.set(-2.12, 5.55, 0.10);
+    rightArm.position.set(2.12, 5.55, 0.10);
     root.add(leftArm, rightArm);
     add(leftArm, [
-      cyl(0.38, 0.48, 2.2, 6, trunkCol, [-0.4, -0.9, 0.3], [-0.35, 0, -0.28]),
-      dodec(0.62, trunkDark, [-0.75, -1.95, 0.75]),
-      cone(0.22, 0.85, 5, trunkCol, [-0.9, -2.35, 1.05], [0.55, 0, -0.2]),
-      dodec(0.55, leafBright, [-0.55, -0.5, 0.2]),
+      box(1.05, 2.25, 1.05, barkMid, [-0.24, -1.05, 0.12], [-0.12, 0, -0.18]),
+      box(1.18, 2.45, 1.18, barkLight, [-0.62, -2.95, 0.42], [-0.28, 0, -0.06]),
+      box(0.55, 0.85, 0.42, mossCol, [-0.88, -2.25, 0.35]),
+      // Massive chunky carved wooden knuckle-fist!
+      box(1.42, 1.32, 1.48, barkDark, [-0.68, -4.45, 0.72]),
+      box(1.36, 0.34, 0.36, barkLight, [-0.68, -4.75, 1.38]),
     ]);
     add(rightArm, [
-      cyl(0.38, 0.48, 2.2, 6, trunkCol, [0.4, -0.9, 0.3], [-0.35, 0, 0.28]),
-      dodec(0.62, trunkDark, [0.75, -1.95, 0.75]),
-      cone(0.22, 0.85, 5, trunkCol, [0.9, -2.35, 1.05], [0.55, 0, 0.2]),
-      dodec(0.55, leafBright, [0.55, -0.5, 0.2]),
+      box(1.05, 2.25, 1.05, barkMid, [0.24, -1.05, 0.12], [-0.12, 0, 0.18]),
+      box(1.18, 2.45, 1.18, barkLight, [0.62, -2.95, 0.42], [-0.28, 0, 0.06]),
+      box(0.55, 0.85, 0.42, mossCol, [0.88, -2.25, 0.35]),
+      box(1.42, 1.32, 1.48, barkDark, [0.68, -4.45, 0.72]),
+      box(1.36, 0.34, 0.36, barkLight, [0.68, -4.75, 1.38]),
     ]);
 
     return {
@@ -2539,20 +2676,28 @@ export class ProceduralLowPolyPack implements IAssetPack {
     let pair: LowPolyGeometryPair;
     switch (key) {
       case 'Goblin':
+        // Tall lean hunched vivid-green Goblin humanoid with long pointy ears & ragged brown loincloth!
         pair = makePair([
-          cyl(0.28, 0.34, 0.65, 6, 0x45b849, [0, 0.72, 0.05], [0.22, 0, 0]),
-          cyl(0.34, 0.36, 0.24, 6, 0x73492b, [0, 0.45, 0]),
-          cyl(0.1, 0.09, 0.42, 5, 0x389c3d, [-0.16, 0.22, 0]),
-          cyl(0.1, 0.09, 0.42, 5, 0x389c3d, [0.16, 0.22, 0]),
-          dodec(0.32, 0x54cf57, [0, 1.18, 0.14]),
-          cone(0.1, 0.26, 4, 0x62db65, [0, 1.15, 0.46], [Math.PI * 0.5, 0, 0]),
-          cone(0.11, 0.48, 4, 0x45b849, [-0.46, 1.24, 0.1], [0, 0, 1.22]),
-          cone(0.11, 0.48, 4, 0x45b849, [0.46, 1.24, 0.1], [0, 0, -1.22]),
-          box(0.1, 0.08, 0.06, 0xffe03b, [-0.12, 1.24, 0.4]),
-          box(0.1, 0.08, 0.06, 0xffe03b, [0.12, 1.24, 0.4]),
-          cyl(0.08, 0.07, 0.42, 5, 0x45b849, [0.38, 0.92, 0.18], [-0.8, 0, -0.3]),
-          cyl(0.14, 0.06, 0.78, 6, 0x8a5632, [0.48, 1.26, 0.44], [0.45, 0, -0.15]),
-        ], 'character_palette', 0.052);
+          // Long lean green goblin legs & feet
+          cyl(0.10, 0.08, 0.68, 6, 0x2fa339, [-0.15, 0.34, 0]),
+          cyl(0.10, 0.08, 0.68, 6, 0x2fa339, [0.15, 0.34, 0]),
+          box(0.16, 0.09, 0.26, 0x26852e, [-0.15, 0.05, 0.05]),
+          box(0.16, 0.09, 0.26, 0x26852e, [0.15, 0.05, 0.05]),
+          // Ragged brown leather loincloth
+          cyl(0.26, 0.30, 0.30, 6, 0x52341c, [0, 0.76, 0]),
+          // Hunched lean bright-green torso
+          cyl(0.24, 0.28, 0.74, 6, 0x35b83f, [0, 1.18, 0.06], [0.22, 0, 0]),
+          // Lanky reaching goblin arms
+          cyl(0.075, 0.065, 0.62, 5, 0x35b83f, [-0.34, 1.18, 0.14], [-0.48, 0, 0.18]),
+          cyl(0.075, 0.065, 0.62, 5, 0x35b83f, [0.34, 1.18, 0.14], [-0.48, 0, -0.18]),
+          // Sculpted goblin head with wide protruding pointed ears & sharp nose!
+          dodec(0.26, 0x42c94c, [0, 1.66, 0.14]),
+          cone(0.08, 0.22, 4, 0x4ed658, [0, 1.62, 0.40], [Math.PI * 0.5, 0, 0]),
+          cone(0.09, 0.44, 4, 0x35b83f, [-0.38, 1.72, 0.10], [0, 0, 1.28]),
+          cone(0.09, 0.44, 4, 0x35b83f, [0.38, 1.72, 0.10], [0, 0, -1.28]),
+          box(0.09, 0.07, 0.06, 0xffe44d, [-0.10, 1.70, 0.36]),
+          box(0.09, 0.07, 0.06, 0xffe44d, [0.10, 1.70, 0.36]),
+        ], 'character_palette', 0.038);
         break;
 
       case 'GoblinStrong':
@@ -2697,27 +2842,42 @@ export class ProceduralLowPolyPack implements IAssetPack {
 
       case 'Mummy':
       case 'MummyTank': {
+        // Tall full-height dusty-grey linen-wrapped Desert Mummy warrior!
         const isTank = key === 'MummyTank';
-        const sx = isTank ? 1.35 : 1.0;
+        const sx = isTank ? 1.32 : 1.0;
+        const wrapCol = 0xc9c4b8;
+        const wrapDark = 0x999488;
         const parts: ColoredPartSpec[] = [
-          cyl(0.36 * sx, 0.4 * sx, 0.96, 7, 0xdecda8, [0, 1.02, 0]),
-          cyl(0.42 * sx, 0.42 * sx, 0.16, 7, 0xc7a354, [0, 1.38, 0]), // bronze scarab collar
-          cyl(0.13 * sx, 0.11 * sx, 0.56, 6, 0xd6c39c, [-0.18 * sx, 0.28, 0]),
-          cyl(0.13 * sx, 0.11 * sx, 0.56, 6, 0xd6c39c, [0.18 * sx, 0.28, 0]),
-          dodec(0.36, 0xe8d9b7, [0, 1.66, 0.04]),
-          box(0.32, 0.12, 0.1, 0x1c1412, [0, 1.68, 0.34]),
-          box(0.1, 0.08, 0.08, 0xffb703, [-0.11, 1.68, 0.38]),
-          box(0.1, 0.08, 0.08, 0xffb703, [0.11, 1.68, 0.38]),
-          // Outstretched wrapped mummy arms + trailing linen strips!
-          cyl(0.1 * sx, 0.09 * sx, 0.72, 6, 0xdecda8, [-0.42 * sx, 1.24, 0.42], [1.35, 0, 0]),
-          cyl(0.1 * sx, 0.09 * sx, 0.72, 6, 0xdecda8, [0.42 * sx, 1.24, 0.42], [1.35, 0, 0]),
-          box(0.08, 0.46, 0.04, 0xf2e6c9, [-0.42 * sx, 0.96, 0.64]),
-          box(0.08, 0.42, 0.04, 0xf2e6c9, [0.42 * sx, 0.98, 0.6]),
+          // Tall bandaged humanoid legs
+          cyl(0.13 * sx, 0.11 * sx, 0.78, 6, wrapDark, [-0.17 * sx, 0.39, 0]),
+          cyl(0.13 * sx, 0.11 * sx, 0.78, 6, wrapDark, [0.17 * sx, 0.39, 0]),
+          box(0.20 * sx, 0.10, 0.28, wrapDark, [-0.17 * sx, 0.05, 0.05]),
+          box(0.20 * sx, 0.10, 0.28, wrapDark, [0.17 * sx, 0.05, 0.05]),
+          // Athletic wrapped mummy torso & shoulders
+          lathePart(
+            [
+              [0.30 * sx, 0.76],
+              [0.26 * sx, 0.96],
+              [0.36 * sx, 1.36],
+              [0.40 * sx, 1.54],
+              [0.22 * sx, 1.64],
+            ],
+            7,
+            wrapCol,
+          ),
+          // Wrapped mummy head with dark recessed eye slit!
+          dodec(0.27, wrapCol, [0, 1.84, 0.04]),
+          box(0.28, 0.10, 0.09, 0x1a1816, [0, 1.85, 0.26]),
+          box(0.08, 0.06, 0.08, 0xffc83b, [-0.09, 1.85, 0.29]),
+          box(0.08, 0.06, 0.08, 0xffc83b, [0.09, 1.85, 0.29]),
+          // Hanging heavy bandaged mummy arms
+          cyl(0.10 * sx, 0.09 * sx, 0.74, 6, wrapCol, [-0.42 * sx, 1.24, 0.12], [-0.36, 0, 0.14]),
+          cyl(0.10 * sx, 0.09 * sx, 0.74, 6, wrapCol, [0.42 * sx, 1.24, 0.12], [-0.36, 0, -0.14]),
         ];
         if (isTank) {
-          parts.push(box(1.12, 0.74, 0.66, 0xd4a437, [0, 1.12, 0]), box(0.4, 0.4, 0.16, 0x38f2ff, [0, 1.16, 0.36]));
+          parts.push(box(1.06, 0.72, 0.62, 0xc79a36, [0, 1.22, 0]), box(0.36, 0.36, 0.14, 0x38f2ff, [0, 1.26, 0.34]));
         }
-        pair = makePair(parts, 'mummy_wraps', isTank ? 0.062 : 0.05);
+        pair = makePair(parts, 'mummy_wraps', isTank ? 0.054 : 0.040);
         break;
       }
 
@@ -2808,31 +2968,51 @@ export class ProceduralLowPolyPack implements IAssetPack {
 
       case 'MinibossGolem':
       case 'MinibossGolemSand': {
+        // SCULPTED ANCIENT MONOLITH TITAN (replaces 6 floating gray blocks!)
         const isSand = key === 'MinibossGolemSand';
-        const rockA = isSand ? 0xd9a152 : 0x788794;
-        const rockB = isSand ? 0xb57636 : 0x6c7c8a;
-        const rockC = isSand ? 0x995d2b : 0x5c6b78;
-        const capCol = isSand ? 0xffd23f : 0x5ab846;
-        const coreCol = isSand ? 0xffae19 : 0x4df7ff;
-        pair = makePair([
-          dodec(1.12, rockA, [0, 1.85, 0], undefined, [1.18, 1.05, 0.9]),
-          octa(0.42, coreCol, [0, 1.95, 0.85]),
-          box(0.95, 0.12, 0.16, coreCol, [0, 1.55, 0.88]),
-          dodec(0.74, rockB, [-1.25, 2.38, 0.05]),
-          dodec(0.48, capCol, [-1.25, 2.9, 0.05]),
-          dodec(0.78, rockB, [1.28, 2.42, -0.05]),
-          dodec(0.5, capCol, [1.28, 2.94, -0.05]),
-          box(0.55, 1.35, 0.55, rockB, [-1.36, 1.35, 0.2]),
-          dodec(0.52, rockC, [-1.4, 0.62, 0.35]),
-          box(0.55, 1.35, 0.55, rockB, [1.36, 1.35, 0.2]),
-          dodec(0.52, rockC, [1.4, 0.62, 0.35]),
-          box(0.58, 1.05, 0.62, rockC, [-0.52, 0.52, 0]),
-          box(0.58, 1.05, 0.62, rockC, [0.52, 0.52, 0]),
-          box(0.86, 0.72, 0.8, rockA, [0, 3.02, 0.14]),
-          box(0.58, 0.16, 0.12, coreCol, [0, 3.04, 0.54]),
-        ], isSand ? 'desert_sandstone' : 'stone_golem', 0.072, {
-          emissiveHex: isSand ? 0x994a10 : 0x168099,
-          emissiveIntensity: 0.26,
+        const rockA = isSand ? 0xd99e4e : 0x647585;
+        const rockB = isSand ? 0xb37032 : 0x4f6070;
+        const rockC = isSand ? 0x874e24 : 0x3b4957;
+        const capCol = isSand ? 0xf5c542 : 0x4aa844;
+        const coreCol = isSand ? 0xffae19 : 0x52f7ff;
+        const parts: ColoredPartSpec[] = [
+          // Chiseled monolithic torso carapace housing a blazing recessed energy furnace!
+          { geo: createCraggySpireGeometry(1.18, 1.95, isSand ? 21 : 7, 0.72), color: rockA, pos: [0, 1.12, 0] },
+          // Carved obsidian-stone chest ribs framing the glowing core
+          box(1.52, 0.24, 0.42, rockB, [0, 2.52, 0.68], [0.12, 0, 0]),
+          box(1.24, 0.22, 0.38, rockB, [0, 1.56, 0.62], [-0.12, 0, 0]),
+          box(0.32, 1.05, 0.36, rockC, [-0.58, 2.04, 0.68]),
+          box(0.32, 1.05, 0.36, rockC, [0.58, 2.04, 0.68]),
+          // Blazing faceted runic crystal furnace inside the ribs!
+          octa(0.46, coreCol, [0, 2.04, 0.66], undefined, [0.95, 1.25, 0.78]),
+          torus(0.56, 0.075, 5, 8, coreCol, [0, 2.04, 0.74]),
+          // Towering asymmetric craggy cliff-boulder pauldrons with moss/gilded caps & stone spires!
+          { geo: createCraggySpireGeometry(0.86, 1.35, 13, 0.45), color: rockB, pos: [-1.42, 2.15, 0.04], rot: [0.06, 0.3, 0.32] },
+          { geo: createCraggySpireGeometry(0.92, 1.52, 31, 0.38), color: rockB, pos: [1.46, 2.18, -0.04], rot: [-0.05, -0.4, -0.34] },
+          { geo: createSculptedCanopyCluster(0.62, 0.52, 9), color: capCol, pos: [-1.52, 3.22, 0.05] },
+          { geo: createSculptedCanopyCluster(0.66, 0.50, 17), color: capCol, pos: [1.56, 3.36, -0.04] },
+          // Massive chiselled stone forearms & beveled slam-fists
+          { geo: createCraggySpireGeometry(0.52, 1.48, 41, 0.68), color: rockB, pos: [-1.52, 0.68, 0.36], rot: [0.22, 0, 0.08] },
+          { geo: createCraggySpireGeometry(0.52, 1.48, 53, 0.68), color: rockB, pos: [1.52, 0.68, 0.36], rot: [0.22, 0, -0.08] },
+          box(0.82, 0.72, 0.86, rockC, [-1.58, 0.56, 0.52], [0.1, 0.2, 0]),
+          box(0.82, 0.72, 0.86, rockC, [1.58, 0.56, 0.52], [0.1, -0.2, 0]),
+          // Banded glowing wrist runes
+          box(0.68, 0.14, 0.68, coreCol, [-1.54, 1.06, 0.44]),
+          box(0.68, 0.14, 0.68, coreCol, [1.54, 1.06, 0.44]),
+          // Pillar legs rooted solidly on the earth
+          { geo: createCraggySpireGeometry(0.54, 1.25, 61, 0.78), color: rockC, pos: [-0.58, 0.0, 0] },
+          { geo: createCraggySpireGeometry(0.54, 1.25, 67, 0.78), color: rockC, pos: [0.58, 0.0, 0] },
+          // Ancient carved monolithic sentinel head with recessed glowing visor & crown horns!
+          { geo: createCraggySpireGeometry(0.56, 1.08, 79, 0.66), color: rockA, pos: [0, 2.86, 0.16] },
+          box(0.74, 0.22, 0.28, rockC, [0, 3.44, 0.48]),
+          box(0.62, 0.14, 0.14, coreCol, [0, 3.28, 0.56]),
+          cone(0.18, 0.62, 5, coreCol, [-0.54, 3.68, 0.12], [0, 0, 0.38]),
+          cone(0.18, 0.62, 5, coreCol, [0.54, 3.68, 0.12], [0, 0, -0.38]),
+        ];
+        pair = makePair(parts, isSand ? 'desert_sandstone' : 'stone_golem', 0.068, {
+          emissiveHex: isSand ? 0xb55a14 : 0x1aa8cc,
+          emissiveIntensity: 0.36,
+          gloss: 0.28,
         });
         break;
       }
@@ -2979,139 +3159,276 @@ export class ProceduralLowPolyPack implements IAssetPack {
     let pair: LowPolyGeometryPair;
     switch (kind) {
       case 'pine':
+        // Valheim / PS1 Tall Woodland Pine: sturdy dark trunk & layered earthy dappled pixel-pine boughs!
         pair = makePair([
-          cyl(0.28, 0.48, 2.4, 6, 0x7d4f32, [0, 1.2, 0]),
-          cone(2.15, 2.4, 7, 0x3b9e47, [0, 2.85, 0]),
-          cone(1.7, 2.25, 7, 0x52bd4c, [0, 4.35, 0], [0, 0.45, 0]),
-          cone(1.18, 1.95, 7, 0x7ee058, [0, 5.75, 0], [0, 0.9, 0]),
-        ], 'foliage_pine', 0.075);
+          lathePart([[0.64, 0.0], [0.42, 0.8], [0.30, 2.8], [0.20, 4.8]], 7, 0x5c3822),
+          lathePart([[0.08, 2.5], [1.35, 1.25], [2.25, 0.25], [1.95, 0.0]], 7, 0xc4d4b8, [0, 2.4, 0], [0.03, 0.2, 0.02]),
+          lathePart([[0.06, 2.2], [1.12, 1.08], [1.85, 0.22], [1.60, 0.0]], 7, 0xd1dec4, [0.05, 3.85, -0.04], [-0.03, 0.75, -0.03]),
+          lathePart([[0.05, 1.9], [0.88, 0.92], [1.45, 0.18], [1.22, 0.0]], 7, 0xdde8d1, [-0.04, 5.25, 0.05], [0.02, 1.3, 0.02]),
+          lathePart([[0.02, 1.65], [0.58, 0.74], [0.95, 0.14], [0.78, 0.0]], 6, 0xe8f2dc, [0.03, 6.45, -0.02], [-0.02, 1.8, 0]),
+        ], 'foliage_pine', 0.054);
         break;
 
       case 'oak':
+        // SIGNATURE VALHEIM / PS1 CROOKED WOODLAND TREE: tall lean dark bark trunk, forked limbs & bold dappled pixel-leaf puff clusters!
         pair = makePair([
-          cyl(0.38, 0.62, 2.8, 7, 0x855436, [0, 1.4, 0]),
-          cyl(0.2, 0.32, 1.4, 6, 0x7d4d31, [-0.65, 2.6, 0.25], [0.15, 0, 0.58]),
-          cyl(0.2, 0.32, 1.4, 6, 0x7d4d31, [0.65, 2.65, -0.2], [-0.15, 0, -0.55]),
-          dodec(1.65, 0x4eb043, [0, 3.85, 0]),
-          dodec(1.28, 0x6ecc4b, [-1.15, 3.45, 0.5]),
-          dodec(1.25, 0x6ecc4b, [1.15, 3.55, -0.45]),
-          dodec(1.1, 0x9ce354, [0.15, 4.75, 0.25]),
-        ], 'foliage_oak', 0.08);
+          // Tall crooked dark trunk with subtle organic bend
+          lathePart([[0.68, 0.0], [0.42, 0.85], [0.34, 2.6], [0.28, 4.1]], 7, 0x59341e, [0, 0, 0], [0.05, 0, 0.06]),
+          cyl(0.18, 0.28, 2.25, 6, 0x52301b, [-0.72, 4.15, 0.25], [0.18, 0, 0.56]),
+          cyl(0.16, 0.26, 2.35, 6, 0x52301b, [0.78, 4.35, -0.22], [-0.15, 0, -0.52]),
+          cyl(0.14, 0.22, 1.85, 6, 0x4a2a17, [0.10, 4.55, 0.65], [0.52, 0, -0.08]),
+          // Bold Valheim multi-puff dappled leaf clusters (white/pale-sage vertex tint so foliage_oak pixel art shines at 100% fidelity!)
+          { geo: createSculptedCanopyCluster(1.85, 0.86, 3), color: 0xd6e0cc, pos: [0.05, 5.55, 0.0] },
+          { geo: createSculptedCanopyCluster(1.48, 0.84, 11), color: 0xc9d6be, pos: [-1.48, 4.85, 0.48] },
+          { geo: createSculptedCanopyCluster(1.44, 0.82, 19), color: 0xdce6d1, pos: [1.52, 5.05, -0.44] },
+          { geo: createSculptedCanopyCluster(1.24, 0.80, 29), color: 0xe6edd8, pos: [0.22, 5.35, 1.18] },
+          { geo: createSculptedCanopyCluster(1.32, 0.82, 43), color: 0xf0f5e4, pos: [0.14, 6.55, 0.12] },
+        ], 'foliage_oak', 0.058);
+        break;
+
+      case 'castle_tower':
+        // ICONIC MOSSY RUINED STONE-BRICK CASTLE TOWER DRAPED IN GREEN PIXEL IVY!
+        pair = makePair([
+          // Wide weathered cylindrical stone base & tall tower body
+          cyl(4.15, 4.45, 2.2, 12, 0xc8cfd4, [0, 1.1, 0]),
+          cyl(3.85, 4.10, 9.6, 12, 0xd8dfe3, [0, 6.8, 0]),
+          // Upper flared parapet gallery collar
+          cyl(4.35, 3.95, 1.35, 12, 0xcfd6db, [0, 12.1, 0]),
+          // Broken notched medieval crenelated merlon battlements around the crown!
+          box(1.55, 1.55, 1.15, 0xd6dde0, [0.0, 13.45, 3.72]),
+          box(1.55, 1.45, 1.15, 0xcdd4d9, [3.22, 13.40, 1.86], [0, Math.PI / 3, 0]),
+          box(1.55, 1.60, 1.15, 0xd6dde0, [3.22, 13.48, -1.86], [0, (2 * Math.PI) / 3, 0]),
+          box(1.45, 1.15, 1.15, 0xc5ccd1, [0.0, 13.25, -3.72]),
+          box(1.55, 1.55, 1.15, 0xd6dde0, [-3.22, 13.45, -1.86], [0, Math.PI / 3, 0]),
+          box(1.55, 1.40, 1.15, 0xc8cfd4, [-3.22, 13.38, 1.86], [0, (2 * Math.PI) / 3, 0]),
+          // Recessed dark medieval arrow-slit windows
+          box(0.46, 1.65, 0.35, 0x161a21, [0, 8.2, 3.88]),
+          box(0.46, 1.65, 0.35, 0x161a21, [3.88, 7.6, 0], [0, Math.PI * 0.5, 0]),
+          box(0.46, 1.65, 0.35, 0x161a21, [-3.88, 8.6, 0], [0, Math.PI * 0.5, 0]),
+          // Crumbled mossy base stones
+          box(1.85, 1.25, 1.45, 0xb8c0c7, [3.65, 0.62, 2.35], [0.08, 0.5, -0.06]),
+          box(1.55, 0.95, 1.35, 0xadb6bd, [-3.85, 0.48, 2.15], [-0.06, -0.4, 0.08]),
+        ], 'shrine_rune', 0.088, { uvScale: [4.2, 2.6] });
+        break;
+
+      case 'castle_wall':
+        // Ruined ivy-draped medieval stone fortress curtain wall segment with broken battlements!
+        pair = makePair([
+          box(11.5, 5.2, 2.35, 0xd4dbe0, [0, 2.6, 0]),
+          box(11.8, 0.85, 2.75, 0xc5cdd4, [0, 5.45, 0]),
+          // Broken crenelated merlons along top
+          box(1.65, 1.45, 1.05, 0xd8dfe3, [-4.4, 6.55, 0.72]),
+          box(1.65, 1.35, 1.05, 0xcfd6db, [-1.5, 6.50, 0.72]),
+          box(1.45, 0.85, 1.05, 0xc2cad1, [1.5, 6.25, 0.72]),
+          box(1.65, 1.50, 1.05, 0xd8dfe3, [4.4, 6.58, 0.72]),
+          // Flanking broken rubble buttress piers
+          box(2.55, 6.4, 2.85, 0xcad1d6, [-5.6, 3.2, 0]),
+          box(2.45, 5.6, 2.75, 0xc4cbd1, [5.6, 2.8, 0]),
+        ], 'shrine_rune', 0.084, { uvScale: [3.2, 1.5] });
+        break;
+
+      case 'fallen_log':
+        // Thick mossy fallen forest tree log with tan sawed heartwood end-caps!
+        pair = makePair([
+          cyl(0.46, 0.54, 3.4, 8, 0x8c5e34, [0, 0.44, 0], [0, 0, Math.PI * 0.5]),
+          cyl(0.41, 0.41, 0.08, 8, 0xe0c08d, [-1.72, 0.44, 0], [0, 0, Math.PI * 0.5]),
+          cyl(0.48, 0.48, 0.08, 8, 0xe0c08d, [1.72, 0.44, 0], [0, 0, Math.PI * 0.5]),
+          cone(0.16, 0.65, 5, 0x6b4524, [0.45, 0.76, 0.25], [0.45, 0.2, -0.35]),
+        ], 'bark_grain', 0.044);
+        break;
+
+      case 'sandstone_arch':
+        // MONUMENTAL CURVED DESERT SANDSTONE ROCK ARCH spanning dramatically over dunes!
+        pair = makePair([
+          { geo: createSandstoneArchGeometry(17.5, 11.8, 2.55, 13), color: 0xe8c48e, pos: [0, 0.0, 0] },
+          { geo: createCraggySpireGeometry(3.4, 4.6, 29, 0.62), color: 0xd9ae75, pos: [-8.4, -0.6, 0.3] },
+          { geo: createCraggySpireGeometry(3.2, 4.2, 41, 0.64), color: 0xd9ae75, pos: [8.4, -0.6, -0.2] },
+        ], 'desert_sandstone', 0.095);
+        break;
+
+      case 'desert_ruin':
+        // HALF-BURIED TILTED DESERT ADOBE HOUSE RUIN sinking organically into sand dunes!
+        pair = makePair([
+          // Main weathered flat-roofed sandstone adobe structure tilted into the dune
+          box(7.2, 3.8, 4.8, 0xdcb480, [0, 1.35, 0], [0.14, 0.08, -0.18]),
+          // Raised roof parapet rim
+          box(7.4, 0.48, 0.48, 0xcfa36d, [0, 3.22, 2.15], [0.14, 0.08, -0.18]),
+          box(7.4, 0.48, 0.48, 0xcfa36d, [0, 3.22, -2.15], [0.14, 0.08, -0.18]),
+          box(0.48, 0.48, 4.6, 0xcfa36d, [-3.4, 3.22, 0], [0.14, 0.08, -0.18]),
+          box(0.48, 0.48, 4.6, 0xcfa36d, [3.4, 3.22, 0], [0.14, 0.08, -0.18]),
+          // Recessed dark doorway & square desert ventilation windows!
+          box(1.15, 1.85, 0.24, 0x3b281c, [-1.4, 0.92, 2.38], [0.14, 0.08, -0.18]),
+          box(0.76, 0.76, 0.24, 0x3b281c, [0.85, 1.78, 2.38], [0.14, 0.08, -0.18]),
+          box(0.76, 0.76, 0.24, 0x3b281c, [2.25, 1.54, 2.38], [0.14, 0.08, -0.18]),
+          box(0.24, 0.72, 0.72, 0x3b281c, [3.58, 1.48, 0.25], [0.14, 0.08, -0.18]),
+        ], 'desert_sandstone', 0.072, { uvScale: [2.2, 1.4] });
         break;
 
       case 'boulder':
+        // Clean faceted weathered grey low-poly boulder cluster!
         pair = makePair([
-          dodec(1.15, 0x798f9e, [0, 0.65, 0], undefined, [1.22, 0.78, 1.05]),
-          dodec(0.75, 0x627887, [0.75, 0.42, 0.45], undefined, [1.0, 0.72, 1.1]),
-          dodec(0.72, 0x6bc949, [-0.1, 1.18, -0.05], undefined, [1.25, 0.36, 1.15]),
-        ], 'terrain_cliff', 0.072);
+          dodec(1.55, 0x9aa3ab, [0, 0.72, 0], [0.12, 0.4, -0.08], [1.28, 0.78, 1.15]),
+          dodec(0.98, 0x828c94, [1.15, 0.46, 0.58], [-0.1, 1.1, 0.14], [1.12, 0.72, 1.05]),
+        ], 'terrain_cliff', 0.056);
         break;
 
       case 'desert_boulder':
-        // Stratified wind-sculpted sandstone rock mesa outcrop!
+        // Wind-carved stepped terracotta canyon spire outcrop!
         pair = makePair([
-          dodec(1.25, 0xd6934a, [0, 0.7, 0], undefined, [1.3, 0.85, 1.1]),
-          dodec(0.85, 0xc27a38, [0.85, 0.52, 0.4], undefined, [1.1, 0.7, 1.05]),
-          box(1.5, 0.36, 1.3, 0xebba6d, [-0.1, 1.38, -0.08], [0.05, 0.3, -0.04]),
-        ], 'desert_sandstone', 0.072);
+          { geo: createCraggySpireGeometry(1.55, 2.35, 17, 0.58), color: 0xc9803c, pos: [0, 0.0, 0] },
+          { geo: createCraggySpireGeometry(1.08, 1.45, 31, 0.64), color: 0xa8622c, pos: [1.02, 0.0, 0.46], rot: [0, 0.8, 0.08] },
+          { geo: createCraggySpireGeometry(1.25, 0.52, 47, 0.86), color: 0xebb76a, pos: [-0.06, 2.15, -0.05] },
+        ], 'desert_sandstone', 0.068);
         break;
 
       case 'sandstone_obelisk':
-        // Weathered Egyptian sandstone obelisk & carved pyramidion cap!
+        // Sculpted Egyptian sandstone obelisk with stepped temple base, inlaid lapis band & gilded solar pyramidion!
         pair = makePair([
-          box(2.15, 0.58, 2.15, 0xb57038, [0, 0.29, 0]),
-          box(1.62, 0.48, 1.62, 0xcf8946, [0, 0.82, 0]),
-          cyl(0.56, 0.88, 5.2, 4, 0xe3a85b, [0, 3.65, 0], [0, Math.PI * 0.25, 0]),
-          cone(0.58, 1.15, 4, 0xffd23f, [0, 6.8, 0], [0, Math.PI * 0.25, 0]),
-          box(1.26, 0.16, 1.26, 0x38bdf8, [0, 4.95, 0]),
-        ], 'desert_sandstone', 0.078, { emissiveHex: 0x165e7a, emissiveIntensity: 0.18 });
+          box(2.35, 0.48, 2.35, 0x99582a, [0, 0.24, 0]),
+          box(1.85, 0.46, 1.85, 0xbd7338, [0, 0.72, 0]),
+          cyl(0.56, 0.94, 5.4, 4, 0xe3a558, [0, 3.65, 0], [0, Math.PI * 0.25, 0]),
+          box(1.24, 0.22, 1.24, 0x2688d9, [0, 4.95, 0]),
+          box(1.30, 0.12, 1.30, 0xffd23f, [0, 5.14, 0]),
+          cone(0.59, 1.28, 4, 0xffd23f, [0, 6.95, 0], [0, Math.PI * 0.25, 0]),
+          octa(0.32, 0x5cf7ff, [0, 7.95, 0]),
+        ], 'desert_sandstone', 0.074, { emissiveHex: 0x1ca8d9, emissiveIntensity: 0.28, gloss: 0.45 });
         break;
 
       case 'ruin_pillar':
+        // Classical fluted temple column with fractured capital, gold band & cascading emerald moss!
         pair = makePair([
-          box(1.45, 0.42, 1.45, 0x6e7d8f, [0, 0.21, 0]),
-          cyl(0.48, 0.56, 3.4, 8, 0x8d9dad, [0, 2.05, 0]),
-          box(1.3, 0.35, 1.3, 0x768596, [0, 3.85, 0], [0.08, 0.2, 0.06]),
-          dodec(0.55, 0x64c246, [0.35, 4.08, 0.2], undefined, [1.2, 0.45, 1.1]),
-        ], 'shrine_rune', 0.07);
+          box(1.65, 0.36, 1.65, 0x5c6b7c, [0, 0.18, 0]),
+          lathePart(
+            [
+              [0.72, 0.36],
+              [0.64, 0.62],
+              [0.54, 0.78],
+              [0.48, 3.45],
+              [0.64, 3.68],
+              [0.76, 3.88],
+            ],
+            10,
+            0x8c9cad,
+          ),
+          box(1.48, 0.28, 1.48, 0x6f7f91, [0, 4.02, 0], [0.06, 0.18, 0.05]),
+          cyl(0.55, 0.55, 0.14, 10, 0xd4a437, [0, 3.46, 0]),
+          { geo: createSculptedCanopyCluster(0.74, 0.42, 5), color: 0x58bd42, pos: [0.35, 4.28, 0.18] },
+        ], 'shrine_rune', 0.068);
         break;
 
       case 'cactus':
-        // Tall ribbed outlined Desert Saguaro Cactus w/ twin bent arms & pink desert blossom!
         pair = makePair([
-          cyl(0.38, 0.46, 3.9, 7, 0x4ca642, [0, 1.95, 0]),
-          dodec(0.39, 0x5ab84c, [0, 3.95, 0]),
-          cyl(0.24, 0.28, 1.15, 6, 0x45993b, [-0.62, 2.15, 0], [0, 0, 1.25]),
-          cyl(0.23, 0.25, 1.35, 6, 0x4ca642, [-1.1, 2.95, 0]),
-          cyl(0.24, 0.28, 1.05, 6, 0x45993b, [0.58, 1.72, 0], [0, 0, -1.25]),
-          cyl(0.22, 0.24, 1.22, 6, 0x4ca642, [1.02, 2.42, 0]),
-          octa(0.24, 0xff5c8a, [0, 4.35, 0]),
-        ], 'desert_cactus', 0.068);
+          lathePart([[0.48, 0.0], [0.45, 2.2], [0.40, 3.8], [0.22, 4.12]], 8, 0x5c8744),
+          cyl(0.24, 0.28, 1.15, 7, 0x4b7537, [-0.62, 2.15, 0], [0, 0, 1.25]),
+          lathePart([[0.25, 0], [0.24, 1.28], [0.12, 1.48]], 7, 0x5c8744, [-1.1, 2.35, 0]),
+          cyl(0.24, 0.28, 1.05, 7, 0x4b7537, [0.58, 1.72, 0], [0, 0, -1.25]),
+          lathePart([[0.24, 0], [0.22, 1.15], [0.10, 1.35]], 7, 0x5c8744, [1.02, 1.88, 0]),
+          octa(0.24, 0xe8647c, [0, 4.32, 0]),
+        ], 'desert_cactus', 0.058);
         break;
 
       case 'tombstone':
+        // Sculpted gothic pointed-arch gravestone with bevelled plinth & carved chthonic cross!
         pair = makePair([
-          box(1.42, 0.34, 0.86, 0x424a5e, [0, 0.17, 0]),
-          box(1.08, 1.82, 0.4, 0x68738a, [0, 1.16, 0], [0, 0, 0.05]),
-          cyl(0.54, 0.54, 0.4, 8, 0x68738a, [0, 2.04, 0], [Math.PI * 0.5, 0, 0]),
-          // Carved gothic cross relief
-          box(0.14, 0.72, 0.08, 0x495166, [0, 1.48, 0.22]),
-          box(0.46, 0.14, 0.08, 0x495166, [0, 1.64, 0.22]),
-        ], 'graveyard_cobble', 0.066);
+          box(1.52, 0.34, 0.92, 0x353c4f, [0, 0.17, 0]),
+          extrudePolyPart(
+            [
+              [-0.58, 0.0],
+              [0.58, 0.0],
+              [0.54, 1.65],
+              [0.32, 2.12],
+              [0.0, 2.36],
+              [-0.32, 2.12],
+              [-0.54, 1.65],
+            ],
+            0.34,
+            0.04,
+            0x66708a,
+            [0, 0.32, 0],
+            [0, 0, 0.04],
+          ),
+          box(0.14, 0.78, 0.09, 0x3b4257, [0, 1.56, 0.22], [0, 0, 0.04]),
+          box(0.50, 0.14, 0.09, 0x3b4257, [0, 1.74, 0.22], [0, 0, 0.04]),
+          octa(0.14, 0xa855f7, [0, 1.74, 0.28]),
+        ], 'graveyard_cobble', 0.062, { emissiveHex: 0x6b21a8, emissiveIntensity: 0.18 });
         break;
 
       case 'dead_tree':
-        // Crooked gnarled dead Graveyard tree with twisted branches!
+        // Twisted gothic haunted silhouette tree with clawed roots & eerie glowing violet ember wisps!
         pair = makePair([
-          cyl(0.32, 0.64, 2.9, 6, 0x3b3042, [0, 1.42, 0], [0.06, 0, 0.08]),
-          cyl(0.2, 0.32, 2.3, 6, 0x322838, [0.22, 3.6, 0.1], [-0.12, 0, -0.18]),
-          cyl(0.12, 0.22, 2.0, 5, 0x2a2130, [-0.88, 3.35, 0.25], [0.2, 0, 0.78]),
-          cyl(0.1, 0.2, 1.9, 5, 0x2a2130, [1.05, 4.15, -0.25], [-0.25, 0, -0.72]),
-          cone(0.14, 1.1, 4, 0x261d2b, [-1.72, 4.15, 0.42], [0.25, 0, 0.55]),
-          cone(0.12, 1.1, 4, 0x261d2b, [1.82, 4.88, -0.45], [-0.22, 0, -0.48]),
-        ], 'bark_grain', 0.072);
+          lathePart([[0.82, 0.0], [0.46, 0.9], [0.34, 2.6], [0.22, 3.9]], 7, 0x302638, [0, 0, 0], [0.06, 0, 0.08]),
+          cyl(0.16, 0.26, 2.4, 6, 0x261e2e, [0.34, 3.85, 0.12], [-0.14, 0, -0.28]),
+          cyl(0.11, 0.22, 2.2, 6, 0x211a29, [-0.95, 3.45, 0.28], [0.22, 0, 0.82]),
+          cyl(0.10, 0.20, 2.1, 6, 0x211a29, [1.12, 4.25, -0.25], [-0.26, 0, -0.76]),
+          cone(0.13, 1.25, 4, 0x1c1524, [-1.88, 4.28, 0.45], [0.26, 0, 0.58]),
+          cone(0.12, 1.25, 4, 0x1c1524, [1.96, 5.02, -0.48], [-0.24, 0, -0.52]),
+          cone(0.10, 1.05, 4, 0x1c1524, [0.45, 5.15, 0.42], [0.45, 0, -0.15]),
+        ], 'bark_grain', 0.068);
         break;
 
       case 'iron_fence':
-        // Gothic Graveyard wrought-iron fence pillar & spiked bars!
         pair = makePair([
-          box(0.86, 2.75, 0.86, 0x4b5369, [0, 1.38, 0]),
-          box(1.04, 0.34, 1.04, 0x5c6680, [0, 2.86, 0]),
-          octa(0.34, 0x7c6a99, [0, 3.3, 0]),
-          // Adjacent wrought-iron spiked fence span
-          box(2.6, 0.14, 0.14, 0x262c3b, [1.65, 2.05, 0]),
-          box(2.6, 0.14, 0.14, 0x262c3b, [1.65, 0.65, 0]),
-          cyl(0.06, 0.06, 2.1, 5, 0x262c3b, [0.95, 1.35, 0]),
-          cyl(0.06, 0.06, 2.1, 5, 0x262c3b, [1.65, 1.35, 0]),
-          cyl(0.06, 0.06, 2.1, 5, 0x262c3b, [2.35, 1.35, 0]),
-          cone(0.11, 0.32, 4, 0x475269, [0.95, 2.52, 0]),
-          cone(0.11, 0.32, 4, 0x475269, [1.65, 2.52, 0]),
-          cone(0.11, 0.32, 4, 0x475269, [2.35, 2.52, 0]),
-        ], 'graveyard_iron', 0.064);
+          box(0.92, 2.85, 0.92, 0x454d63, [0, 1.42, 0]),
+          box(1.12, 0.34, 1.12, 0x5c6680, [0, 2.94, 0]),
+          octa(0.36, 0xa855f7, [0, 3.42, 0]),
+          box(2.7, 0.14, 0.14, 0x1f2433, [1.7, 2.12, 0]),
+          box(2.7, 0.14, 0.14, 0x1f2433, [1.7, 0.65, 0]),
+          cyl(0.06, 0.06, 2.2, 6, 0x1f2433, [0.95, 1.4, 0]),
+          cyl(0.06, 0.06, 2.2, 6, 0x1f2433, [1.65, 1.4, 0]),
+          cyl(0.06, 0.06, 2.2, 6, 0x1f2433, [2.35, 1.4, 0]),
+          cone(0.12, 0.36, 4, 0x55627d, [0.95, 2.62, 0]),
+          cone(0.12, 0.36, 4, 0x55627d, [1.65, 2.62, 0]),
+          cone(0.12, 0.36, 4, 0x55627d, [2.35, 2.62, 0]),
+        ], 'graveyard_iron', 0.062, { emissiveHex: 0x6b21a8, emissiveIntensity: 0.15 });
         break;
 
       case 'crypt_arch':
-        // Imposing Haunted Graveyard Crypt Archway Landmark!
+        // Sculpted Haunted Gothic Pointed-Arch Crypt Gatehouse!
         pair = makePair([
-          box(1.25, 5.2, 1.25, 0x454d63, [-2.35, 2.6, 0]),
-          box(1.25, 5.2, 1.25, 0x454d63, [2.35, 2.6, 0]),
-          box(6.4, 1.15, 1.45, 0x555e78, [0, 5.65, 0]),
-          cone(1.85, 1.75, 4, 0x3b4154, [0, 7.05, 0], [0, Math.PI * 0.25, 0]),
-          octa(0.55, 0xa855f7, [0, 6.25, 0.72]),
-          box(0.5, 0.5, 0.5, 0x70f5ff, [-2.35, 5.45, 0.68]),
-          box(0.5, 0.5, 0.5, 0x70f5ff, [2.35, 5.45, 0.68]),
-        ], 'graveyard_cobble', 0.085, { emissiveHex: 0x6b21a8, emissiveIntensity: 0.3 });
+          box(1.38, 5.4, 1.38, 0x3b4257, [-2.45, 2.7, 0]),
+          box(1.38, 5.4, 1.38, 0x3b4257, [2.45, 2.7, 0]),
+          extrudePolyPart(
+            [
+              [-3.35, 0.0],
+              [3.35, 0.0],
+              [3.15, 1.15],
+              [0.0, 2.65],
+              [-3.15, 1.15],
+            ],
+            1.35,
+            0.08,
+            0x4f5873,
+            [0, 5.25, 0],
+          ),
+          octa(0.62, 0xc05eff, [0, 6.55, 0.78]),
+          octa(0.42, 0x70f5ff, [-2.45, 5.85, 0.74]),
+          octa(0.42, 0x70f5ff, [2.45, 5.85, 0.74]),
+        ], 'graveyard_cobble', 0.082, { emissiveHex: 0x7e22ce, emissiveIntensity: 0.42 });
         break;
 
       case 'citadel_pillar':
-        // Towering Obsidian & Gilded-Gold FinalBossMap Colosseum Perimeter Obelisk!
+        // Towering Dark Volcanic Basalt & Bronze Fluted Arena Monolith with ember brazier crown!
         pair = makePair([
-          cyl(1.45, 1.75, 0.9, 6, 0x1d162b, [0, 0.45, 0]),
-          cyl(1.2, 1.35, 0.35, 6, 0xffc83b, [0, 1.05, 0]),
-          cyl(0.82, 1.05, 7.4, 6, 0x291e3d, [0, 4.9, 0]),
-          cyl(1.15, 0.9, 0.45, 6, 0xffc83b, [0, 8.75, 0]),
-          octa(0.75, 0xff4d2e, [0, 9.75, 0], undefined, [0.9, 1.45, 0.9]),
-        ], 'citadel_obsidian', 0.088, { emissiveHex: 0xa82438, emissiveIntensity: 0.38, gloss: 0.6 });
+          lathePart(
+            [
+              [1.92, 0.0],
+              [1.65, 0.72],
+              [1.38, 1.05],
+              [1.12, 1.35],
+              [0.86, 8.2],
+              [1.24, 8.65],
+              [1.48, 9.15],
+              [1.15, 9.35],
+            ],
+            8,
+            0x36282a,
+          ),
+          cyl(1.42, 1.48, 0.28, 8, 0xd49c3b, [0, 1.05, 0]),
+          cyl(1.38, 1.24, 0.34, 8, 0xd49c3b, [0, 8.85, 0]),
+          // Sculpted flaming brazier chalice top!
+          lathePart([[0.45, 9.35], [0.95, 9.95], [0.65, 10.65], [0.05, 11.45]], 6, 0xff5a1f),
+          octa(0.55, 0xffe066, [0, 10.25, 0], undefined, [0.9, 1.4, 0.9]),
+        ], 'citadel_obsidian', 0.074, { emissiveHex: 0x8f2414, emissiveIntensity: 0.10, gloss: 0.42, uvScale: [1.8, 3.0] });
         break;
     }
 
@@ -3469,30 +3786,30 @@ export class ProceduralLowPolyPack implements IAssetPack {
 
       case 'sword_arc':
         pair = makePair([
-          torus(1.15, 0.16, 4, 10, 0xdbf8ff, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.46], undefined, Math.PI * 0.92),
-          torus(1.26, 0.08, 4, 10, 0xffffff, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.42], undefined, Math.PI * 0.85),
-        ], 'character_palette', 0.03, { emissiveHex: 0x7df9ff, emissiveIntensity: 0.9 });
+          { geo: createCalligraphicSlashGeometry(0.58, 1.32, Math.PI * 1.08, 18), color: 0x7df9ff },
+          { geo: createCalligraphicSlashGeometry(1.12, 1.38, Math.PI * 0.98, 18), color: 0xffffff, pos: [0, 0.03, 0] },
+        ], 'character_palette', 0.022, { emissiveHex: 0x5cf7ff, emissiveIntensity: 1.35 });
         break;
 
       case 'katana_arc':
         pair = makePair([
-          torus(1.32, 0.1, 4, 12, 0x5cf2ff, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.55], undefined, Math.PI * 1.1),
-          torus(1.42, 0.05, 4, 12, 0xffffff, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.52], undefined, Math.PI * 1.04),
-        ], 'character_palette', 0.024, { emissiveHex: 0x38f2ff, emissiveIntensity: 1.15 });
+          { geo: createCalligraphicSlashGeometry(0.76, 1.52, Math.PI * 1.24, 20), color: 0x38f2ff },
+          { geo: createCalligraphicSlashGeometry(1.32, 1.56, Math.PI * 1.14, 20), color: 0xffffff, pos: [0, 0.025, 0] },
+        ], 'character_palette', 0.018, { emissiveHex: 0x38f2ff, emissiveIntensity: 1.55 });
         break;
 
       case 'hero_arc':
         pair = makePair([
-          torus(1.28, 0.18, 4, 10, 0xffd84d, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.46], undefined, Math.PI * 0.92),
-          torus(1.4, 0.09, 4, 10, 0x70f5ff, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.42], undefined, Math.PI * 0.84),
-        ], 'character_palette', 0.03, { emissiveHex: 0xffc83b, emissiveIntensity: 1.0 });
+          { geo: createCalligraphicSlashGeometry(0.62, 1.46, Math.PI * 1.12, 18), color: 0xffc83b },
+          { geo: createCalligraphicSlashGeometry(1.22, 1.52, Math.PI * 1.02, 18), color: 0xfff8c2, pos: [0, 0.03, 0] },
+        ], 'character_palette', 0.022, { emissiveHex: 0xffb703, emissiveIntensity: 1.45 });
         break;
 
       case 'corrupt_arc':
         pair = makePair([
-          torus(1.26, 0.18, 4, 10, 0x9b22d9, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.48], undefined, Math.PI * 0.96),
-          torus(1.38, 0.09, 4, 10, 0xff2e54, undefined, [Math.PI * 0.5, 0, -Math.PI * 0.44], undefined, Math.PI * 0.88),
-        ], 'character_palette', 0.032, { emissiveHex: 0xb938ff, emissiveIntensity: 1.05 });
+          { geo: createCalligraphicSlashGeometry(0.62, 1.44, Math.PI * 1.15, 18), color: 0x9b22d9 },
+          { geo: createCalligraphicSlashGeometry(1.20, 1.50, Math.PI * 1.04, 18), color: 0xff385c, pos: [0, 0.03, 0] },
+        ], 'character_palette', 0.024, { emissiveHex: 0xd946ef, emissiveIntensity: 1.48 });
         break;
 
       case 'scythe':

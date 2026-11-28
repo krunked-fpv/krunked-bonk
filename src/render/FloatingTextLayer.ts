@@ -513,10 +513,13 @@ export class FloatingTextLayer {
         scaleBoost = 1.08 - p * 0.08;
       }
 
-      const fontPx = Math.max(10, Math.round(e.pixelSize * scaleBoost * scaleMult));
-      ctx.font = `900 ${fontPx}px "Segoe UI Black", "Arial Black", system-ui, sans-serif`;
-      const halfLabelW = ctx.measureText(e.text).width * 0.5 + 6;
-      const halfLabelH = fontPx * 0.58 + 3;
+      const fontPx = Math.max(11, Math.round(e.pixelSize * scaleBoost * scaleMult));
+      const isEpicCallout = e.priority >= 2;
+      ctx.font = isEpicCallout
+        ? `900 italic ${fontPx}px "Palatino Linotype", "Book Antiqua", Georgia, serif`
+        : `900 ${fontPx}px "Trebuchet MS", "Segoe UI Black", sans-serif`;
+      const halfLabelW = ctx.measureText(e.text).width * 0.5 + 8;
+      const halfLabelH = fontPx * 0.58 + 4;
 
       // Exact bounding-box de-overlap so combat numbers fan out cleanly without colliding
       for (let nudge = 0; nudge < 8; nudge++) {
@@ -549,12 +552,13 @@ export class FloatingTextLayer {
       const alpha = t > 0.65 ? Math.max(0, 1 - (t - 0.65) / 0.35) : 1.0;
       ctx.globalAlpha = alpha;
 
-      // Drop shadow + crisp ink outline + vertical gradient fill
-      ctx.lineWidth = Math.max(2.6, fontPx * 0.24);
-      ctx.strokeStyle = '#070910';
-      ctx.strokeText(e.text, sx, sy + 1.2);
+      // Crisp bold black-outlined retro-arcade damage numbers (clean & high-contrast!)
+      ctx.lineWidth = Math.max(3.4, fontPx * 0.28);
+      ctx.strokeStyle = '#08090d';
+      ctx.strokeText(e.text, sx + 1.0, sy + 1.6);
+      ctx.strokeText(e.text, sx, sy);
 
-      const grad = ctx.createLinearGradient(sx, sy - fontPx * 0.55, sx, sy + fontPx * 0.55);
+      const grad = ctx.createLinearGradient(sx, sy - fontPx * 0.52, sx, sy + fontPx * 0.52);
       grad.addColorStop(0, e.colorTop);
       grad.addColorStop(1, e.colorBottom);
       ctx.fillStyle = grad;
@@ -576,13 +580,6 @@ export class FloatingTextLayer {
     const cx = w * 0.5;
     const cy = h * 0.5;
     const outerR = Math.hypot(cx, cy);
-
-    // Subtle cinematic edge vignette (keeps center crisp & bright, frames UI cleanly!)
-    const vig = ctx.createRadialGradient(cx, cy, outerR * 0.52, cx, cy, outerR * 1.04);
-    vig.addColorStop(0, 'rgba(6, 9, 18, 0)');
-    vig.addColorStop(1, inGameplay ? 'rgba(6, 9, 18, 0.28)' : 'rgba(6, 9, 18, 0.36)');
-    ctx.fillStyle = vig;
-    ctx.fillRect(0, 0, w, h);
 
     if (!inGameplay) return;
 
@@ -650,6 +647,36 @@ export class FloatingTextLayer {
     const halfH = this.height * 0.5;
     const pPos = state.player.pos;
     const enemies = state.enemies;
+
+    // 0. Iconic compact world-space Red/Black HP Bar (+ Cyan Shield Bar) right beneath the hero's boots!
+    if (!state.player.dead) {
+      this._proj.set(pPos.x, pPos.y - 0.08, pPos.z).project(camera);
+      if (this._proj.z >= -1.0 && this._proj.z <= 1.0) {
+        const px = (this._proj.x + 1) * halfW;
+        const py = (1 - this._proj.y) * halfH + (isCompact ? 10 : 14);
+        if (px > 40 && px < this.width - 40 && py > 40 && py < this.height - 24) {
+          const barW = isCompact ? 46 : 58;
+          const hpH = isCompact ? 5 : 6;
+          const bx = Math.round(px - barW * 0.5);
+          const by = Math.round(py);
+          const hpRatio = state.player.maxHp > 0 ? Math.max(0, Math.min(1, state.player.hp / state.player.maxHp)) : 0;
+
+          if (state.player.maxShield > 0) {
+            const shH = 3;
+            const shRatio = Math.max(0, Math.min(1, state.player.shield / Math.max(1, state.player.maxShield)));
+            ctx.fillStyle = '#090b10';
+            ctx.fillRect(bx - 1, by - shH - 2, barW + 2, shH + 2);
+            ctx.fillStyle = '#14a3f5';
+            ctx.fillRect(bx, by - shH - 1, Math.round(barW * shRatio), shH);
+          }
+
+          ctx.fillStyle = '#090b10';
+          ctx.fillRect(bx - 1, by - 1, barW + 2, hpH + 2);
+          ctx.fillStyle = '#e81e1e';
+          ctx.fillRect(bx, by, Math.round(barW * hpRatio), hpH);
+        }
+      }
+    }
 
     // A. Slim crisp overhead HP bars above wounded Elites & Minibosses (max 10 nearest)
     let barsDrawn = 0;

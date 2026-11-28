@@ -392,7 +392,7 @@ export class HudOverlay {
 
     const levelBadge = document.createElement('div');
     levelBadge.className = 'kb-hud-level-badge';
-    levelBadge.textContent = 'LV. 1';
+    levelBadge.textContent = 'LVL 1';
 
     // Top-Center: Timer + Boss/Pylon/Darkness/Banner Stack
     const topCenter = document.createElement('div');
@@ -684,7 +684,7 @@ export class HudOverlay {
       this.xpLabel.textContent = `XP ${Math.floor(player.xp)} / ${Math.ceil(player.xpToNext)}`;
     }
     if (this.levelBadge) {
-      this.levelBadge.textContent = `LV. ${player.level}`;
+      this.levelBadge.textContent = `LVL ${player.level}`;
     }
 
     // 2. Stage Countdown Timer (crimson in Final Swarm)

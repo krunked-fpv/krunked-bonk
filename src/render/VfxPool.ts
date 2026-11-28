@@ -19,11 +19,14 @@ import {
   createEnergyBeamMaterial,
   createMkToonMaterial,
   createShockwaveRingMaterial,
+  createSlashArcMaterial,
 } from './toonShader';
+import { createCalligraphicSlashGeometry } from '../assets/SculptedMeshes';
 
 const CUBE_CAPACITY = 768;
 const RING_CAPACITY = 112;
 const BEAM_CAPACITY = 56;
+const SLASH_CAPACITY = 40;
 
 const ELEMENT_HEX: Record<ElementType, number> = {
   Physical: 0xfff4d4,
@@ -76,7 +79,21 @@ export class VfxPool {
   private readonly bHeight = new Float32Array(BEAM_CAPACITY);
   private beamCursor = 0;
 
+  // ---- Calligraphic Hades Slash Arc Burst Pool ----
+  private readonly slashMesh: THREE.InstancedMesh;
+  private readonly slashGeo: THREE.BufferGeometry;
+  private readonly slashMat: THREE.ShaderMaterial;
+  private readonly sPos = new Float32Array(SLASH_CAPACITY * 3);
+  private readonly sColor = new Float32Array(SLASH_CAPACITY * 3);
+  private readonly sLife = new Float32Array(SLASH_CAPACITY);
+  private readonly sMaxLife = new Float32Array(SLASH_CAPACITY);
+  private readonly sScale = new Float32Array(SLASH_CAPACITY);
+  private readonly sYaw = new Float32Array(SLASH_CAPACITY);
+  private readonly sTilt = new Float32Array(SLASH_CAPACITY);
+  private slashCursor = 0;
+
   // Continuous emitters timers
+  private footstepEmitAccum = 0;
   private slideEmitAccum = 0;
   private grindEmitAccum = 0;
   private shrineEmitAccum = 0;
@@ -86,6 +103,8 @@ export class VfxPool {
   // Pre-allocated scratch math objects (ZERO per-frame allocations!)
   private readonly _mat = new THREE.Matrix4();
   private readonly _pos = new THREE.Vector3();
+  private readonly _velDir = new THREE.Vector3();
+  private readonly _yAxis = new THREE.Vector3(0, 1, 0);
   private readonly _quat = new THREE.Quaternion();
   private readonly _euler = new THREE.Euler();
   private readonly _scale = new THREE.Vector3();
@@ -94,38 +113,47 @@ export class VfxPool {
   constructor() {
     this.rootGroup.name = 'VfxPoolRoot';
 
-    this.cubeGeo = new THREE.OctahedronGeometry(0.24, 0);
+    // Chunky low-poly cube puff / spark particle (renders crisp square dust puffs AND kinetic hit sparks!)
+    this.cubeGeo = new THREE.BoxGeometry(0.24, 0.24, 0.24);
     this.cubeMat = createMkToonMaterial({
       color: 0xffffff,
-      emissive: 0x333333,
-      emissiveIntensity: 0.45,
-      rimStrength: 0.4,
+      emissive: 0x666666,
+      emissiveIntensity: 0.65,
+      rimStrength: 0.25,
       rimColor: 0xffffff,
+      hatchStrength: 0.0,
     });
     this.cubeMesh = new THREE.InstancedMesh(this.cubeGeo, this.cubeMat, CUBE_CAPACITY);
     this.cubeMesh.count = 0;
     this.cubeMesh.frustumCulled = false;
 
-    this.ringGeo = new THREE.RingGeometry(0.68, 1.0, 24);
+    this.ringGeo = new THREE.RingGeometry(0.56, 1.0, 28);
     this.ringGeo.rotateX(-Math.PI * 0.5);
-    this.ringMat = createShockwaveRingMaterial(0xffffff, 0.88);
+    this.ringMat = createShockwaveRingMaterial(0xffffff, 0.92);
     this.ringMesh = new THREE.InstancedMesh(this.ringGeo, this.ringMat, RING_CAPACITY);
     this.ringMesh.count = 0;
     this.ringMesh.frustumCulled = false;
 
     this.beamGeo = new THREE.CylinderGeometry(0.45, 0.62, 1.0, 12, 1, true);
     this.beamGeo.translate(0, 0.5, 0);
-    this.beamMat = createEnergyBeamMaterial(0xffffff, 0.72);
+    this.beamMat = createEnergyBeamMaterial(0xffffff, 0.78);
     this.beamMesh = new THREE.InstancedMesh(this.beamGeo, this.beamMat, BEAM_CAPACITY);
     this.beamMesh.count = 0;
     this.beamMesh.frustumCulled = false;
+
+    this.slashGeo = createCalligraphicSlashGeometry(0.46, 1.4, Math.PI * 1.18, 20);
+    this.slashMat = createSlashArcMaterial(0xffffff, 0.96);
+    this.slashMesh = new THREE.InstancedMesh(this.slashGeo, this.slashMat, SLASH_CAPACITY);
+    this.slashMesh.count = 0;
+    this.slashMesh.frustumCulled = false;
 
     const white = new THREE.Color(0xffffff);
     this.cubeMesh.setColorAt(0, white);
     this.ringMesh.setColorAt(0, white);
     this.beamMesh.setColorAt(0, white);
+    this.slashMesh.setColorAt(0, white);
 
-    this.rootGroup.add(this.cubeMesh, this.ringMesh, this.beamMesh);
+    this.rootGroup.add(this.cubeMesh, this.ringMesh, this.beamMesh, this.slashMesh);
   }
 
   private fastRand(): number {
@@ -141,9 +169,32 @@ export class VfxPool {
     this.cLife.fill(0);
     this.rLife.fill(0);
     this.bLife.fill(0);
+    this.sLife.fill(0);
     this.cubeMesh.count = 0;
     this.ringMesh.count = 0;
     this.beamMesh.count = 0;
+    this.slashMesh.count = 0;
+  }
+
+  public spawnSlash(
+    x: number, y: number, z: number,
+    yaw: number, hex: number, scale: number, lifeSec = 0.24, tilt = 0.22,
+  ): void {
+    const i = this.slashCursor;
+    this.slashCursor = (this.slashCursor + 1) % SLASH_CAPACITY;
+    const i3 = i * 3;
+    this.sPos[i3] = x;
+    this.sPos[i3 + 1] = y;
+    this.sPos[i3 + 2] = z;
+    this._col.setHex(hex);
+    this.sColor[i3] = this._col.r;
+    this.sColor[i3 + 1] = this._col.g;
+    this.sColor[i3 + 2] = this._col.b;
+    this.sLife[i] = lifeSec;
+    this.sMaxLife[i] = lifeSec;
+    this.sScale[i] = scale;
+    this.sYaw[i] = yaw;
+    this.sTilt[i] = tilt;
   }
 
   public spawnCube(
@@ -291,8 +342,19 @@ export class VfxPool {
             this.spawnBurst(ev.pos.x, ev.pos.y + 0.6, ev.pos.z, 10, 0xa6f7ff, 3.0, 8.0, 0.5, 0.95, 0.35, -6);
           } else if (wid.includes('aegis')) {
             this.spawnRing(ev.pos.x, ev.pos.y + 0.5, ev.pos.z, 0xffe45e, 1.0, 4.8, 0.35);
-          } else if (wid.includes('katana') || wid.includes('scythe')) {
-            this.spawnBurst(ev.pos.x + ev.dir.x * 1.8, ev.pos.y, ev.pos.z + ev.dir.z * 1.8, 6, wid.includes('scythe') ? 0x4dff9e : 0x5cf7ff, 3.0, 7.5, 0.4, 0.75, 0.24, -6);
+          } else if (wid.includes('katana') || wid.includes('scythe') || wid.includes('sword') || wid.includes('axe') || wid.includes('dexecutioner')) {
+            const slashHex = wid.includes('scythe')
+              ? 0x4dff9e
+              : wid.includes('corrupt')
+                ? 0xd946ef
+                : wid.includes('hero')
+                  ? 0xffd23f
+                  : wid.includes('axe') || wid.includes('dexecutioner')
+                    ? 0xff5a36
+                    : 0x5cf7ff;
+            const yaw = Math.atan2(ev.dir.x, ev.dir.z);
+            this.spawnSlash(ev.pos.x, ev.pos.y + 0.95, ev.pos.z, yaw, slashHex, 2.3, 0.24, (this.fastRand() - 0.5) * 0.45);
+            this.spawnBurst(ev.pos.x + ev.dir.x * 1.8, ev.pos.y + 0.7, ev.pos.z + ev.dir.z * 1.8, 7, slashHex, 4.0, 9.5, 0.48, 0.9, 0.24, -6);
           }
           break;
         }
@@ -302,15 +364,18 @@ export class VfxPool {
           if (ev.isBonker) {
             this.spawnRing(ev.pos.x, ev.pos.y + 0.9, ev.pos.z, 0xff2ec4, 0.6, 5.8, 0.48);
             this.spawnRing(ev.pos.x, ev.pos.y + 0.95, ev.pos.z, 0xffd84d, 0.4, 4.2, 0.38);
+            this.spawnSlash(ev.pos.x, ev.pos.y + 1.15, ev.pos.z, this.fastRand() * 6.28, 0xff2ec4, 2.8, 0.30, 0.32);
             this.spawnBeam(ev.pos.x, ev.pos.y, ev.pos.z, 0xff2ec4, 1.4, 14.0, 0.32);
-            this.spawnBurst(ev.pos.x, ev.pos.y + 1.1, ev.pos.z, 22, 0xffd84d, 5.0, 14.0, 0.9, 1.8, 0.58, -14);
+            this.spawnBurst(ev.pos.x, ev.pos.y + 1.1, ev.pos.z, 24, 0xffd84d, 6.0, 15.0, 0.9, 1.8, 0.58, -14);
           } else if (ev.isMegacrit) {
             this.spawnRing(ev.pos.x, ev.pos.y + 0.8, ev.pos.z, 0xff5722, 0.5, 3.8, 0.36);
-            this.spawnBurst(ev.pos.x, ev.pos.y + 1.0, ev.pos.z, 12, 0xffb703, 4.0, 10.5, 0.75, 1.35, 0.44, -14);
+            this.spawnSlash(ev.pos.x, ev.pos.y + 1.1, ev.pos.z, this.fastRand() * 6.28, 0xffb703, 2.1, 0.26, -0.28);
+            this.spawnBurst(ev.pos.x, ev.pos.y + 1.0, ev.pos.z, 14, 0xffb703, 4.5, 11.5, 0.75, 1.35, 0.44, -14);
           } else if (ev.critTier >= 1) {
-            this.spawnBurst(ev.pos.x, ev.pos.y + 0.9, ev.pos.z, 6, 0xffd84d, 3.0, 7.5, 0.6, 1.1, 0.34, -14);
+            this.spawnSlash(ev.pos.x, ev.pos.y + 1.0, ev.pos.z, this.fastRand() * 6.28, 0xffd84d, 1.55, 0.20, 0.24);
+            this.spawnBurst(ev.pos.x, ev.pos.y + 0.9, ev.pos.z, 7, 0xffd84d, 3.5, 8.5, 0.6, 1.1, 0.34, -14);
           } else {
-            this.spawnBurst(ev.pos.x, ev.pos.y + 0.9, ev.pos.z, 3, baseHex, 2.2, 5.5, 0.45, 0.85, 0.26, -15);
+            this.spawnBurst(ev.pos.x, ev.pos.y + 0.9, ev.pos.z, 4, baseHex, 2.5, 6.5, 0.45, 0.88, 0.26, -15);
           }
           if (ev.weaponId) {
             const wid = ev.weaponId.toLowerCase();
@@ -397,6 +462,31 @@ export class VfxPool {
   public emitContinuous(state: Readonly<SimState>, dtSec: number): void {
     const p: PlayerState = state.player;
     const hSpeed = Math.hypot(p.vel.x, p.vel.z);
+
+    // 0. Iconic crisp white pixel-square footstep dust puffs behind the sprinting player!
+    if (p.grounded && hSpeed > 3.2 && !p.isSliding && p.railId === null) {
+      this.footstepEmitAccum += dtSec * Math.min(18, 6 + hSpeed * 0.72);
+      while (this.footstepEmitAccum >= 1) {
+        this.footstepEmitAccum -= 1;
+        const puffHex = state.mapId === 'Desert' ? 0xfff5db : 0xf7faff;
+        const backX = -p.vel.x / Math.max(1, hSpeed);
+        const backZ = -p.vel.z / Math.max(1, hSpeed);
+        this.spawnCube(
+          p.pos.x + backX * 0.45 + (this.fastRand() - 0.5) * 0.42,
+          p.pos.y + 0.16 + this.fastRand() * 0.14,
+          p.pos.z + backZ * 0.45 + (this.fastRand() - 0.5) * 0.42,
+          backX * 1.1 + (this.fastRand() - 0.5) * 0.9,
+          0.95 + this.fastRand() * 0.95,
+          backZ * 1.1 + (this.fastRand() - 0.5) * 0.9,
+          puffHex,
+          0.62 + this.fastRand() * 0.36,
+          0.38,
+          -1.8,
+        );
+      }
+    } else {
+      this.footstepEmitAccum = 0;
+    }
 
     // 1. Slide dust & golden speed spark trail
     if (p.isSliding && hSpeed > 5.0) {
@@ -592,17 +682,30 @@ export class VfxPool {
       const py = (this.cPos[i3 + 1] = this.cPos[i3 + 1]! + this.cVel[i3 + 1]! * dt);
       const pz = (this.cPos[i3 + 2] = this.cPos[i3 + 2]! + this.cVel[i3 + 2]! * dt);
 
-      const rx = (this.cRot[i3] = this.cRot[i3]! + 6.5 * dt);
-      const ry = (this.cRot[i3 + 1] = this.cRot[i3 + 1]! + 5.2 * dt);
-      const rz = (this.cRot[i3 + 2] = this.cRot[i3 + 2]! + 4.1 * dt);
+      const vx = this.cVel[i3]!;
+      const vy = this.cVel[i3 + 1]!;
+      const vz = this.cVel[i3 + 2]!;
+      const spd = Math.hypot(vx, vy, vz);
 
       const t = nextLife / Math.max(0.001, this.cMaxLife[i]!);
       const sc = this.cScale[i]! * Math.min(1, t * 2.2);
 
       this._pos.set(px, py, pz);
-      this._euler.set(rx, ry, rz);
-      this._quat.setFromEuler(this._euler);
-      this._scale.setScalar(sc);
+      if (spd > 4.2) {
+        // High-speed combat sparks stretch slightly along velocity vector
+        this._velDir.set(vx / spd, vy / spd, vz / spd);
+        this._quat.setFromUnitVectors(this._yAxis, this._velDir);
+        const stretch = Math.min(2.1, 0.95 + spd * 0.08);
+        this._scale.set(sc * 0.78, sc * stretch, sc * 0.78);
+      } else {
+        // Gentle tumbling chunky pixel-square footstep dust puffs!
+        const rx = (this.cRot[i3] = this.cRot[i3]! + 3.8 * dt);
+        const ry = (this.cRot[i3 + 1] = this.cRot[i3 + 1]! + 3.2 * dt);
+        const rz = (this.cRot[i3 + 2] = this.cRot[i3 + 2]! + 2.6 * dt);
+        this._euler.set(rx, ry, rz);
+        this._quat.setFromEuler(this._euler);
+        this._scale.setScalar(sc);
+      }
       this._mat.compose(this._pos, this._quat, this._scale);
       this.cubeMesh.setMatrixAt(activeCubes, this._mat);
 
@@ -679,6 +782,41 @@ export class VfxPool {
       this.beamMesh.instanceMatrix.needsUpdate = true;
       if (this.beamMesh.instanceColor) this.beamMesh.instanceColor.needsUpdate = true;
     }
+    let activeSlashes = 0;
+    for (let i = 0; i < SLASH_CAPACITY; i++) {
+      const life = this.sLife[i]!;
+      if (life <= 0) continue;
+      const nextLife = life - dt;
+      this.sLife[i] = nextLife;
+      if (nextLife <= 0) continue;
+
+      const i3 = i * 3;
+      const frac = 1 - nextLife / Math.max(0.001, this.sMaxLife[i]!);
+      const eased = 1 - (1 - frac) * (1 - frac);
+      const sc = this.sScale[i]! * (0.72 + eased * 0.55);
+
+      this._pos.set(this.sPos[i3]!, this.sPos[i3 + 1]!, this.sPos[i3 + 2]!);
+      this._euler.set(this.sTilt[i]!, this.sYaw[i]! + eased * 0.92, this.sTilt[i]! * 0.5);
+      this._quat.setFromEuler(this._euler);
+      this._scale.set(sc, sc, sc);
+      this._mat.compose(this._pos, this._quat, this._scale);
+      this.slashMesh.setMatrixAt(activeSlashes, this._mat);
+
+      const fade = Math.max(0, 1 - frac * frac);
+      this._col.setRGB(
+        this.sColor[i3]! * fade * 1.4,
+        this.sColor[i3 + 1]! * fade * 1.4,
+        this.sColor[i3 + 2]! * fade * 1.4,
+      );
+      this.slashMesh.setColorAt(activeSlashes, this._col);
+      activeSlashes++;
+    }
+    this.slashMesh.count = activeSlashes;
+    this.slashMesh.visible = activeSlashes > 0;
+    if (activeSlashes > 0) {
+      this.slashMesh.instanceMatrix.needsUpdate = true;
+      if (this.slashMesh.instanceColor) this.slashMesh.instanceColor.needsUpdate = true;
+    }
   }
 
   public dispose(): void {
@@ -688,5 +826,7 @@ export class VfxPool {
     this.ringMat.dispose();
     this.beamGeo.dispose();
     this.beamMat.dispose();
+    this.slashGeo.dispose();
+    this.slashMat.dispose();
   }
 }

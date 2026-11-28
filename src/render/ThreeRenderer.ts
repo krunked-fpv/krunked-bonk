@@ -1,19 +1,14 @@
 /**
- * KRUNKEDBONK — Main Three.js MK-Toon Stylized Low-Poly 3D Renderer (Wave 2 Full Expansion)
+ * KRUNKEDBONK — Main Three.js Hades-Inspired Stylized 3D Renderer
  *
- * Implements IRenderer with exact extracted oracle.json RGB lighting across ALL 8 stages:
- * - StageForest1:   fog (0.00, 0.4824, 0.6157) @ 0.0070, ambient 0.7453, sun (1.00, 0.9569, 0.8392)
- * - StageForest2:   fog (0.3843, 0.2824, 0.6235) @ 0.0070, ambient (0.70, 0.66, 0.89)
- * - StageForest3:   fog (0.3020, 0.0784, 0.0784) @ 0.0070, ambient (0.85, 0.65, 0.65)
- * - StageDesert1:   fog (0.9255, 0.8157, 0.5922) @ 0.0060, ambient 0.7453, sun (1.00, 0.9569, 0.8392)
- * - StageDesert2:   fog (0.4227, 0.6211, 0.9434) @ 0.0060, ambient (0.4655, 0.5624, 0.95), sun (0.3647, 0.6353, 1.0)
- * - StageDesert3:   fog (0.5765, 0.1882, 0.1882) @ 0.0060, ambient (0.82, 0.63, 0.62), sun (0.8784, 0.7412, 0.7176)
- * - StageGraveyard: fog (0.4941, 0.4157, 0.6235) @ 0.0075, ambient 0.7453, sun (0.9451, 0.8431, 1.0)
- * - FinalBossMap:   dramatic obsidian & ember-gold colosseum sky & fog @ 0.0050
- *
- * Also drives smooth dynamic Big Bob Darkness fog/sky squeeze, Blind challenge dark fog,
- * The Floor is Lava molten floor tint, dynamic speed FOV, MilkShake recoil, and ZERO
- * per-frame allocations in render()!
+ * Implements IRenderer with exact extracted oracle.json RGB stage palettes enhanced by:
+ * - PostProcessPipeline (HalfFloat HDR + UnrealBloomPass + HadesInkGradePass ACES chiaroscuro)
+ * - 4-slot real-time dynamic point lighting (hero weapon/aura glow, shrines/lamps/pylons,
+ *   active fireballs/boss cores & decaying combat impact light flashes)
+ * - Mythic biome-specific Sky Dome (alpine sunlit god-rays, desert mesas & pyramids,
+ *   giant cratered Graveyard Harvest Moon, shattered eclipsed Obsidian Sun in FinalBossMap)
+ * - Smooth Big Bob Darkness / Blind fog squeeze, Floor-is-Lava molten floor, dynamic speed FOV,
+ *   MilkShake recoil, and ZERO per-frame allocations in render()!
  */
 
 import * as THREE from 'three';
@@ -24,6 +19,7 @@ import {
   DEFAULT_RENDER_SETTINGS,
   FOV_MAX,
   FOV_MIN,
+  type CharacterId,
   type DebugPerfMetrics,
   type IAssetPack,
   type IRenderer,
@@ -38,10 +34,12 @@ import { AssetRegistry } from '../assets/AssetRegistry';
 import { disposePixelLabelCache } from '../assets/PixelBitmapFont';
 import {
   createSkyDomeMaterial,
+  setGlobalPointLight,
   setGlobalToonLighting,
   setGlobalToonSettings,
   setGlobalToonTime,
 } from './toonShader';
+import { PostProcessPipeline, type BiomeGradeConfig } from './PostProcessPipeline';
 import { TerrainMeshBuilder } from './TerrainMeshBuilder';
 import { EntityInstancer } from './EntityInstancer';
 import { VfxPool } from './VfxPool';
@@ -57,6 +55,7 @@ export interface StageLightingPreset {
   skyMid: number;
   skyHorizon: number;
   nightAmount: number;
+  biomeMode: 0 | 1 | 2 | 3;
   sunDir: [number, number, number];
   sunR: number;
   sunG: number;
@@ -73,243 +72,359 @@ export interface StageLightingPreset {
   inkR: number;
   inkG: number;
   inkB: number;
+  grade: BiomeGradeConfig;
 }
+
+const HERO_LIGHT_COLOR: Partial<Record<CharacterId, [number, number, number]>> = {
+  Fox: [1.0, 0.56, 0.18],
+  Calcium: [0.35, 0.88, 1.0],
+  SirOofie: [0.68, 0.92, 1.0],
+  Vlad: [1.0, 0.22, 0.36],
+  SirChadwell: [0.82, 0.32, 1.0],
+  TonyMcZoom: [0.28, 0.92, 1.0],
+  Noelle: [0.46, 0.90, 1.0],
+  Spaceman: [0.76, 0.42, 1.0],
+  Roberto: [0.32, 1.0, 0.68],
+  Athena: [1.0, 0.86, 0.42],
+  Megachad: [1.0, 0.82, 0.28],
+};
 
 export function getStageLightingPreset(mapId: MapId, tier: MapTier): StageLightingPreset {
   if (mapId === 'Desert') {
     if (tier === 2) {
-      // EXACT StageDesert2 (Twilight Desert) from oracle.json
       return {
-        fogR: 0.4227,
-        fogG: 0.6211,
-        fogB: 0.9434,
-        fogDensity: 0.006,
-        skyTop: 0x16265e,
-        skyMid: 0x3b69bf,
-        skyHorizon: 0x6c9ef0,
-        nightAmount: 0.55,
-        sunDir: [-0.45, 0.72, 0.52],
-        sunR: 0.3647,
-        sunG: 0.6353,
+        fogR: 0.44,
+        fogG: 0.62,
+        fogB: 0.90,
+        fogDensity: 0.0052,
+        skyTop: 0x162b63,
+        skyMid: 0x3b67b5,
+        skyHorizon: 0x82b1ed,
+        nightAmount: 0.52,
+        biomeMode: 1,
+        sunDir: [-0.45, 0.74, 0.50],
+        sunR: 0.72,
+        sunG: 0.86,
         sunB: 1.0,
-        ambientR: 0.4655,
-        ambientG: 0.5624,
-        ambientB: 0.95,
-        shadowR: 0.16,
-        shadowG: 0.24,
-        shadowB: 0.52,
-        highlightR: 0.68,
-        highlightG: 0.85,
+        ambientR: 0.60,
+        ambientG: 0.68,
+        ambientB: 0.94,
+        shadowR: 0.24,
+        shadowG: 0.30,
+        shadowB: 0.54,
+        highlightR: 0.84,
+        highlightG: 0.94,
         highlightB: 1.0,
         inkR: 0.05,
-        inkG: 0.08,
-        inkB: 0.18,
+        inkG: 0.07,
+        inkB: 0.14,
+        grade: {
+          bloomStrength: 0.20,
+          bloomThreshold: 1.04,
+          bloomRadius: 0.42,
+          shadowTint: [0.02, 0.04, 0.10],
+          highlightTint: [0.98, 1.0, 1.04],
+          saturation: 1.09,
+          contrast: 1.06,
+          vignetteStrength: 0.20,
+          inkStrength: 0.06,
+          exposure: 1.08,
+        },
       };
     }
     if (tier === 3) {
-      // EXACT StageDesert3 (Scorched Desert) from oracle.json
+      // Scorched Crimson Desert (blazing scarlet boss sky!)
       return {
-        fogR: 0.5765,
-        fogG: 0.1882,
-        fogB: 0.1882,
-        fogDensity: 0.006,
-        skyTop: 0x24080c,
-        skyMid: 0x732222,
-        skyHorizon: 0x933030,
-        nightAmount: 0.35,
-        sunDir: [0.62, 0.64, 0.45],
-        sunR: 0.8784,
-        sunG: 0.7412,
-        sunB: 0.7176,
-        ambientR: 0.82,
-        ambientG: 0.63,
+        fogR: 0.74,
+        fogG: 0.22,
+        fogB: 0.16,
+        fogDensity: 0.0052,
+        skyTop: 0x7d1010,
+        skyMid: 0xc91e14,
+        skyHorizon: 0xe6401c,
+        nightAmount: 0.15,
+        biomeMode: 3,
+        sunDir: [0.58, 0.66, 0.46],
+        sunR: 1.0,
+        sunG: 0.86,
+        sunB: 0.74,
+        ambientR: 0.84,
+        ambientG: 0.68,
         ambientB: 0.62,
-        shadowR: 0.34,
-        shadowG: 0.14,
-        shadowB: 0.2,
-        highlightR: 1.0,
-        highlightG: 0.82,
+        shadowR: 0.36,
+        shadowG: 0.18,
+        shadowB: 0.20,
+        highlightR: 1.06,
+        highlightG: 0.88,
         highlightB: 0.72,
-        inkR: 0.13,
-        inkG: 0.04,
-        inkB: 0.06,
+        inkR: 0.10,
+        inkG: 0.03,
+        inkB: 0.04,
+        grade: {
+          bloomStrength: 0.24,
+          bloomThreshold: 1.02,
+          bloomRadius: 0.46,
+          shadowTint: [0.08, 0.02, 0.03],
+          highlightTint: [1.05, 0.96, 0.88],
+          saturation: 1.12,
+          contrast: 1.08,
+          vignetteStrength: 0.22,
+          inkStrength: 0.08,
+          exposure: 1.08,
+        },
       };
     }
-    // EXACT StageDesert1 (Crusty Desert) from oracle.json
+    // Desert T1: Sun-bleached dusty warm cream-gold dunes & hazy horizon!
     return {
-      fogR: 0.9255,
-      fogG: 0.8157,
-      fogB: 0.5922,
-      fogDensity: 0.006,
-      skyTop: 0x1d6fc4,
-      skyMid: 0x7bc2e8,
-      skyHorizon: 0xecd097,
+      fogR: 0.89,
+      fogG: 0.77,
+      fogB: 0.54,
+      fogDensity: 0.0046,
+      skyTop: 0xc4954f,
+      skyMid: 0xe6be75,
+      skyHorizon: 0xfae4b0,
       nightAmount: 0.0,
-      sunDir: [0.55, 0.78, 0.28],
+      biomeMode: 1,
+      sunDir: [0.46, 0.74, 0.48],
       sunR: 1.0,
-      sunG: 0.9569,
-      sunB: 0.8392,
-      ambientR: 0.7453,
-      ambientG: 0.7453,
-      ambientB: 0.7453,
-      shadowR: 0.42,
-      shadowG: 0.28,
-      shadowB: 0.44,
-      highlightR: 1.0,
+      sunG: 0.96,
+      sunB: 0.84,
+      ambientR: 0.84,
+      ambientG: 0.80,
+      ambientB: 0.74,
+      shadowR: 0.44,
+      shadowG: 0.32,
+      shadowB: 0.28,
+      highlightR: 1.04,
       highlightG: 0.96,
-      highlightB: 0.84,
-      inkR: 0.14,
-      inkG: 0.08,
-      inkB: 0.06,
+      highlightB: 0.82,
+      inkR: 0.09,
+      inkG: 0.06,
+      inkB: 0.04,
+      grade: {
+        bloomStrength: 0.18,
+        bloomThreshold: 1.06,
+        bloomRadius: 0.40,
+        shadowTint: [0.04, 0.02, 0.02],
+        highlightTint: [1.03, 0.99, 0.92],
+        saturation: 1.08,
+        contrast: 1.05,
+        vignetteStrength: 0.16,
+        inkStrength: 0.06,
+        exposure: 1.06,
+      },
     };
   }
 
   if (mapId === 'Graveyard') {
-    // EXACT StageGraveyard (Haunted Violet) from oracle.json
     return {
-      fogR: 0.4941,
-      fogG: 0.4157,
-      fogB: 0.6235,
-      fogDensity: 0.0075,
-      skyTop: 0x16102d,
-      skyMid: 0x453566,
-      skyHorizon: 0x7e6a9f,
-      nightAmount: 0.95,
-      sunDir: [-0.35, 0.85, 0.4],
-      sunR: 0.9451,
-      sunG: 0.8431,
+      fogR: 0.39,
+      fogG: 0.34,
+      fogB: 0.54,
+      fogDensity: 0.0062,
+      skyTop: 0x161133,
+      skyMid: 0x3b2b66,
+      skyHorizon: 0x6b5896,
+      nightAmount: 0.88,
+      biomeMode: 2,
+      sunDir: [-0.32, 0.64, -0.70],
+      sunR: 0.92,
+      sunG: 0.86,
       sunB: 1.0,
-      ambientR: 0.7453,
-      ambientG: 0.7453,
-      ambientB: 0.7453,
-      shadowR: 0.22,
-      shadowG: 0.17,
+      ambientR: 0.74,
+      ambientG: 0.74,
+      ambientB: 0.82,
+      shadowR: 0.20,
+      shadowG: 0.18,
       shadowB: 0.38,
-      highlightR: 0.95,
-      highlightG: 0.88,
-      highlightB: 1.0,
-      inkR: 0.07,
-      inkG: 0.05,
-      inkB: 0.14,
+      highlightR: 0.96,
+      highlightG: 0.90,
+      highlightB: 1.05,
+      inkR: 0.04,
+      inkG: 0.03,
+      inkB: 0.10,
+      grade: {
+        bloomStrength: 0.22,
+        bloomThreshold: 1.02,
+        bloomRadius: 0.44,
+        shadowTint: [0.03, 0.02, 0.09],
+        highlightTint: [1.0, 0.98, 1.04],
+        saturation: 1.10,
+        contrast: 1.08,
+        vignetteStrength: 0.24,
+        inkStrength: 0.08,
+        exposure: 1.08,
+      },
     };
   }
 
   if (mapId === 'FinalBossMap') {
-    // Dramatic Obsidian & Ember-Gold Citadel Colosseum
+    // Dramatic Apocalyptic Scarlet-Crimson Boss Arena Sky!
     return {
-      fogR: 0.24,
-      fogG: 0.11,
-      fogB: 0.18,
-      fogDensity: 0.005,
-      skyTop: 0x0b0614,
-      skyMid: 0x3b1433,
-      skyHorizon: 0x7a3826,
-      nightAmount: 0.85,
-      sunDir: [0.25, 0.88, -0.35],
+      fogR: 0.66,
+      fogG: 0.16,
+      fogB: 0.14,
+      fogDensity: 0.0042,
+      skyTop: 0x730c0c,
+      skyMid: 0xc21914,
+      skyHorizon: 0xe63c1c,
+      nightAmount: 0.22,
+      biomeMode: 3,
+      sunDir: [0.22, 0.58, -0.78],
       sunR: 1.0,
-      sunG: 0.91,
-      sunB: 0.66,
-      ambientR: 0.7453,
-      ambientG: 0.68,
-      ambientB: 0.7453,
-      shadowR: 0.16,
-      shadowG: 0.1,
-      shadowB: 0.26,
-      highlightR: 1.0,
-      highlightG: 0.92,
-      highlightB: 0.68,
+      sunG: 0.88,
+      sunB: 0.72,
+      ambientR: 0.82,
+      ambientG: 0.66,
+      ambientB: 0.64,
+      shadowR: 0.30,
+      shadowG: 0.14,
+      shadowB: 0.18,
+      highlightR: 1.06,
+      highlightG: 0.90,
+      highlightB: 0.74,
       inkR: 0.08,
+      inkG: 0.02,
+      inkB: 0.04,
+      grade: {
+        bloomStrength: 0.26,
+        bloomThreshold: 1.00,
+        bloomRadius: 0.46,
+        shadowTint: [0.07, 0.01, 0.03],
+        highlightTint: [1.05, 0.96, 0.86],
+        saturation: 1.14,
+        contrast: 1.09,
+        vignetteStrength: 0.24,
+        inkStrength: 0.08,
+        exposure: 1.08,
+      },
+    };
+  }
+
+  if (tier === 2) {
+    // Forest T2: Atmospheric Misty Royal-Violet Twilight Woods!
+    return {
+      fogR: 0.41,
+      fogG: 0.33,
+      fogB: 0.64,
+      fogDensity: 0.0056,
+      skyTop: 0x241c52,
+      skyMid: 0x4c3a85,
+      skyHorizon: 0x735ca8,
+      nightAmount: 0.68,
+      biomeMode: 0,
+      sunDir: [-0.48, 0.72, 0.50],
+      sunR: 0.94,
+      sunG: 0.92,
+      sunB: 1.0,
+      ambientR: 0.74,
+      ambientG: 0.72,
+      ambientB: 0.90,
+      shadowR: 0.22,
+      shadowG: 0.20,
+      shadowB: 0.44,
+      highlightR: 0.98,
+      highlightG: 0.95,
+      highlightB: 1.04,
+      inkR: 0.04,
       inkG: 0.04,
       inkB: 0.12,
+      grade: {
+        bloomStrength: 0.20,
+        bloomThreshold: 1.04,
+        bloomRadius: 0.42,
+        shadowTint: [0.03, 0.02, 0.09],
+        highlightTint: [1.01, 0.99, 1.03],
+        saturation: 1.10,
+        contrast: 1.06,
+        vignetteStrength: 0.20,
+        inkStrength: 0.06,
+        exposure: 1.08,
+      },
     };
   }
 
-  // EXACT StageForest2 (Deep Forest — Indigo-Purple Twilight) from oracle.json
-  if (tier === 2) {
-    return {
-      fogR: 0.3843,
-      fogG: 0.2824,
-      fogB: 0.6235,
-      fogDensity: 0.007,
-      skyTop: 0x161038,
-      skyMid: 0x453178,
-      skyHorizon: 0x62489f,
-      nightAmount: 0.8,
-      sunDir: [-0.52, 0.7, 0.48],
-      sunR: 1.0,
-      sunG: 0.9569,
-      sunB: 0.8392,
-      ambientR: 0.7,
-      ambientG: 0.66,
-      ambientB: 0.89,
-      shadowR: 0.22,
-      shadowG: 0.18,
-      shadowB: 0.46,
-      highlightR: 1.0,
-      highlightG: 0.92,
-      highlightB: 0.88,
-      inkR: 0.07,
-      inkG: 0.06,
-      inkB: 0.16,
-    };
-  }
-
-  // EXACT StageForest3 (Cursed Forest — Crimson-Ash) from oracle.json
   if (tier === 3) {
     return {
-      fogR: 0.302,
-      fogG: 0.0784,
-      fogB: 0.0784,
-      fogDensity: 0.007,
-      skyTop: 0x170508,
-      skyMid: 0x451214,
-      skyHorizon: 0x4d1414,
-      nightAmount: 0.65,
+      fogR: 0.44,
+      fogG: 0.14,
+      fogB: 0.12,
+      fogDensity: 0.0056,
+      skyTop: 0x3b0b0e,
+      skyMid: 0x821c1a,
+      skyHorizon: 0xb83522,
+      nightAmount: 0.35,
+      biomeMode: 3,
       sunDir: [0.42, 0.72, -0.52],
       sunR: 1.0,
-      sunG: 0.9569,
-      sunB: 0.8392,
-      ambientR: 0.85,
-      ambientG: 0.65,
-      ambientB: 0.65,
-      shadowR: 0.24,
-      shadowG: 0.09,
+      sunG: 0.90,
+      sunB: 0.78,
+      ambientR: 0.82,
+      ambientG: 0.68,
+      ambientB: 0.66,
+      shadowR: 0.28,
+      shadowG: 0.12,
       shadowB: 0.16,
-      highlightR: 1.0,
-      highlightG: 0.84,
-      highlightB: 0.74,
-      inkR: 0.12,
-      inkG: 0.03,
-      inkB: 0.06,
+      highlightR: 1.05,
+      highlightG: 0.88,
+      highlightB: 0.76,
+      inkR: 0.08,
+      inkG: 0.02,
+      inkB: 0.04,
+      grade: {
+        bloomStrength: 0.24,
+        bloomThreshold: 1.02,
+        bloomRadius: 0.44,
+        shadowTint: [0.06, 0.01, 0.03],
+        highlightTint: [1.05, 0.96, 0.88],
+        saturation: 1.12,
+        contrast: 1.08,
+        vignetteStrength: 0.22,
+        inkStrength: 0.08,
+        exposure: 1.08,
+      },
     };
   }
 
-  // EXACT StageForest1 (Green Forest) from oracle.json
+  // Flagship Forest T1: Crisp Atmospheric Teal-Cerulean Sky + Warm Sunlit Earthy Mossy Woods!
   return {
-    fogR: 0.0,
-    fogG: 0.4824,
-    fogB: 0.6157,
-    fogDensity: 0.007,
-    skyTop: 0x1a82e2,
-    skyMid: 0x4cc4f4,
-    skyHorizon: 0x7cd8eb,
+    fogR: 0.06,
+    fogG: 0.45,
+    fogB: 0.58,
+    fogDensity: 0.0046,
+    skyTop: 0x0a5680,
+    skyMid: 0x137ca6,
+    skyHorizon: 0x42b0c7,
     nightAmount: 0.0,
-    sunDir: [0.46, 0.82, 0.34],
+    biomeMode: 0,
+    sunDir: [0.46, 0.78, 0.44],
     sunR: 1.0,
-    sunG: 0.9569,
-    sunB: 0.8392,
-    ambientR: 0.7453,
-    ambientG: 0.7453,
-    ambientB: 0.7453,
+    sunG: 0.96,
+    sunB: 0.85,
+    ambientR: 0.80,
+    ambientG: 0.82,
+    ambientB: 0.80,
     shadowR: 0.22,
-    shadowG: 0.31,
-    shadowB: 0.56,
-    highlightR: 1.0,
-    highlightG: 0.9569,
-    highlightB: 0.8392,
-    inkR: 0.05,
-    inkG: 0.09,
-    inkB: 0.14,
+    shadowG: 0.32,
+    shadowB: 0.44,
+    highlightR: 1.04,
+    highlightG: 0.98,
+    highlightB: 0.84,
+    inkR: 0.04,
+    inkG: 0.06,
+    inkB: 0.09,
+    grade: {
+      bloomStrength: 0.18,
+      bloomThreshold: 1.05,
+      bloomRadius: 0.40,
+      shadowTint: [0.02, 0.04, 0.08],
+      highlightTint: [1.03, 1.0, 0.93],
+      saturation: 1.08,
+      contrast: 1.06,
+      vignetteStrength: 0.18,
+      inkStrength: 0.06,
+      exposure: 1.08,
+    },
   };
 }
 
@@ -322,6 +437,7 @@ function lerpAngle(a: number, b: number, t: number): number {
 export class ThreeRenderer implements IRenderer {
   private container: HTMLElement | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
+  private readonly postProcess = new PostProcessPipeline();
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly fog: THREE.FogExp2;
@@ -344,8 +460,18 @@ export class ThreeRenderer implements IRenderer {
   };
   private currentTerrain: ITerrainSampler | null = null;
   private currentMapId: MapId = 'Forest';
-  private baseFogDensity = 0.007;
+  private currentMapTier: MapTier = 1;
+  private baseFogDensity = 0.0056;
   private darknessBlend = 0;
+
+  // Dynamic Combat Impact Flash Light (Slot 3)
+  private flashLightX = 0;
+  private flashLightY = 0;
+  private flashLightZ = 0;
+  private flashLightR = 1;
+  private flashLightG = 0.85;
+  private flashLightB = 0.4;
+  private flashLightEnergy = 0;
 
   // Frame timing & camera state
   private lastRenderMs = 0;
@@ -362,7 +488,7 @@ export class ThreeRenderer implements IRenderer {
   private lastViewportH = 720;
   private lastDpr = 1;
 
-  // Pre-allocated scratch math & atmosphere color objects (ZERO per-frame allocations in render()!)
+  // Pre-allocated scratch math & atmosphere color objects (ZERO per-frame allocations!)
   private readonly _targetPos = new THREE.Vector3();
   private readonly _camOffset = new THREE.Vector3();
   private readonly _camPos = new THREE.Vector3();
@@ -370,21 +496,21 @@ export class ThreeRenderer implements IRenderer {
   private readonly _right = new THREE.Vector3();
   private readonly _up = new THREE.Vector3(0, 1, 0);
   private readonly _baseFogColor = new THREE.Color(0.0, 0.4824, 0.6157);
-  private readonly _darkFogColor = new THREE.Color(0.032, 0.022, 0.062);
-  private readonly _blindFogColor = new THREE.Color(0.015, 0.015, 0.024);
+  private readonly _darkFogColor = new THREE.Color(0.024, 0.016, 0.052);
+  private readonly _blindFogColor = new THREE.Color(0.012, 0.012, 0.020);
 
   constructor() {
     this.assets = new AssetRegistry();
 
     this.scene = new THREE.Scene();
-    this.fog = new THREE.FogExp2(new THREE.Color(0.0, 0.4824, 0.6157), 0.007);
+    this.fog = new THREE.FogExp2(new THREE.Color(0.0, 0.4824, 0.6157), 0.0056);
     this.scene.fog = this.fog;
     this.scene.background = new THREE.Color(0.0, 0.4824, 0.6157);
 
-    this.camera = new THREE.PerspectiveCamera(this.settings.fov, 16 / 9, 0.15, 420);
+    this.camera = new THREE.PerspectiveCamera(this.settings.fov, 16 / 9, 0.15, 440);
 
-    this.skyDomeGeo = new THREE.SphereGeometry(280, 24, 16);
-    this.skyDomeMat = createSkyDomeMaterial(0x147ae0, 0x24afd9, 0x007b9d);
+    this.skyDomeGeo = new THREE.SphereGeometry(290, 28, 18);
+    this.skyDomeMat = createSkyDomeMaterial(0x104c9c, 0x2ca2d4, 0x80dce6);
     this.skyDome = new THREE.Mesh(this.skyDomeGeo, this.skyDomeMat);
     this.skyDome.frustumCulled = false;
     this.skyDome.renderOrder = -100;
@@ -462,6 +588,13 @@ export class ThreeRenderer implements IRenderer {
     const w = rect.width > 0 ? rect.width : typeof window !== 'undefined' ? window.innerWidth : 1280;
     const h = rect.height > 0 ? rect.height : typeof window !== 'undefined' ? window.innerHeight : 720;
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+
+    if (this.renderer && !this.postProcess.isEnabled()) {
+      const pixelScale = Math.max(0.5, Math.min(1.5, this.settings.pixelScale || 1.0));
+      this.postProcess.init(this.renderer, this.scene, this.camera, w, h, Math.min(2, dpr * pixelScale));
+      this.postProcess.applyBiomeGrade(getStageLightingPreset(this.currentMapId, this.currentMapTier).grade);
+    }
+
     this.resize(w, h, dpr);
   }
 
@@ -469,6 +602,7 @@ export class ThreeRenderer implements IRenderer {
     this.unsubscribeAssets();
     this.floatingText.unmount();
     this.minimap.unmount();
+    this.postProcess.dispose();
     if (this.renderer) {
       if (this.renderer.domElement.parentElement) {
         this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
@@ -499,8 +633,10 @@ export class ThreeRenderer implements IRenderer {
 
     if (this.renderer) {
       const pixelScale = Math.max(0.5, Math.min(1.5, this.settings.pixelScale || 1.0));
-      this.renderer.setPixelRatio(Math.min(2, dpr * pixelScale));
+      const effDpr = Math.min(2, dpr * pixelScale);
+      this.renderer.setPixelRatio(effDpr);
       this.renderer.setSize(w, h, false);
+      this.postProcess.resize(w, h, effDpr);
     }
 
     this.floatingText.resize(w, h, dpr);
@@ -548,7 +684,9 @@ export class ThreeRenderer implements IRenderer {
   ): void {
     this.currentTerrain = terrain;
     this.currentMapId = mapId;
+    this.currentMapTier = mapTier;
     this.darknessBlend = 0;
+    this.flashLightEnergy = 0;
     this.applyStageLighting(mapId, mapTier);
     this.terrainBuilder.buildMap(mapId, mapTier, seed, terrain, this.settings.grassQuality);
     this.entityInstancer.setTerrain(terrain);
@@ -556,6 +694,17 @@ export class ThreeRenderer implements IRenderer {
     this.vfxPool.clear();
     this.floatingText.clear();
     this.shakeTrauma = 0;
+  }
+
+  private triggerFlashLight(x: number, y: number, z: number, r: number, g: number, b: number, energy: number): void {
+    if (energy < this.flashLightEnergy * 0.7) return;
+    this.flashLightX = x;
+    this.flashLightY = y + 1.2;
+    this.flashLightZ = z;
+    this.flashLightR = r;
+    this.flashLightG = g;
+    this.flashLightB = b;
+    this.flashLightEnergy = Math.min(2.4, energy);
   }
 
   public consumeEvents(events: readonly SimEvent[]): void {
@@ -569,36 +718,53 @@ export class ThreeRenderer implements IRenderer {
       const ev = events[i]!;
       switch (ev.type) {
         case 'damage_dealt':
-          if (ev.isBonker) this.addShakeTrauma(0.88);
-          else if (ev.isMegacrit) this.addShakeTrauma(0.45);
-          else if (ev.critTier >= 1) this.addShakeTrauma(0.16);
+          if (ev.isBonker) {
+            this.addShakeTrauma(0.88);
+            this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 1.0, 0.28, 0.85, 2.2);
+          } else if (ev.isMegacrit) {
+            this.addShakeTrauma(0.45);
+            this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 1.0, 0.62, 0.16, 1.5);
+          } else if (ev.critTier >= 1) {
+            this.addShakeTrauma(0.16);
+            this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 1.0, 0.86, 0.34, 0.9);
+          }
           break;
         case 'player_hurt':
           this.addShakeTrauma(0.55);
+          this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 1.0, 0.18, 0.28, 1.3);
           break;
         case 'player_land':
           if (ev.impactSpeed > 14) this.addShakeTrauma(0.28);
           break;
         case 'player_jump_pad':
           this.addShakeTrauma(0.32);
+          this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 0.32, 0.94, 1.0, 1.4);
           break;
         case 'boss_spawn':
         case 'final_swarm_start':
           this.addShakeTrauma(0.75);
+          this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 1.0, 0.16, 0.28, 2.3);
           break;
         case 'boss_defeated':
         case 'pylon_charged':
           this.addShakeTrauma(0.58);
+          this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 0.35, 1.0, 0.68, 2.0);
           break;
         case 'weapon_stolen':
           this.addShakeTrauma(0.52);
           break;
         case 'weapon_reclaimed':
+          this.addShakeTrauma(0.32);
+          break;
         case 'player_level_up':
           this.addShakeTrauma(0.3);
+          this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 0.42, 0.92, 1.0, 1.85);
           break;
         case 'pickup_collected':
-          if (ev.kind === 'nuke') this.addShakeTrauma(0.85);
+          if (ev.kind === 'nuke') {
+            this.addShakeTrauma(0.85);
+            this.triggerFlashLight(ev.pos.x, ev.pos.y, ev.pos.z, 1.0, 0.42, 0.12, 2.4);
+          }
           break;
         default:
           break;
@@ -622,6 +788,7 @@ export class ThreeRenderer implements IRenderer {
 
     this.elapsedTimeSec += dtSec;
     setGlobalToonTime(this.elapsedTimeSec);
+    this.postProcess.setTime(this.elapsedTimeSec);
 
     const alpha = this.settings.classic50HzSnap ? 1.0 : Math.max(0, Math.min(1, interpAlpha));
     this.lastInterpAlpha = alpha;
@@ -632,9 +799,12 @@ export class ThreeRenderer implements IRenderer {
     const py = prevState.player.pos.y + (currState.player.pos.y - prevState.player.pos.y) * alpha;
     const pz = prevState.player.pos.z + (currState.player.pos.z - prevState.player.pos.z) * alpha;
 
-    // Lazily build rails & jump pads once per map, then animate weather/props (ZERO allocations!)
+    // Lazily build rails & jump pads once per map, then animate weather/braziers/props (ZERO allocations!)
     this.terrainBuilder.ensureWorldFeatures(currState.rails, currState.jumpPads);
     this.terrainBuilder.updateAnimatedProps(this.elapsedTimeSec, px, pz);
+
+    // Update 4-slot real-time dynamic point lights (ZERO allocations!)
+    this.updateDynamicPointLights(currState, px, py, pz, dtSec);
 
     // Dynamic atmosphere modulation: Big Bob Darkness, Blind challenge, Desert sandstorm & Floor-is-Lava!
     const chId = currState.challengeId;
@@ -655,7 +825,6 @@ export class ThreeRenderer implements IRenderer {
         : this.baseFogDensity + sandstormGust;
     this.fog.density += (targetDensity - this.fog.density) * Math.min(1, dtSec * 4.0);
 
-    // Smoothly darken fog, scene backdrop & sky dome during Darkness / Blind (ZERO allocs!)
     const darkTargetCol = isBlind ? this._blindFogColor : this._darkFogColor;
     this.fog.color.copy(this._baseFogColor).lerp(darkTargetCol, this.darknessBlend);
     if (this.scene.background instanceof THREE.Color) {
@@ -686,7 +855,9 @@ export class ThreeRenderer implements IRenderer {
     this.vfxPool.update(dtSec);
 
     if (this.renderer) {
-      this.renderer.render(this.scene, this.camera);
+      if (!this.postProcess.render()) {
+        this.renderer.render(this.scene, this.camera);
+      }
     }
 
     this.floatingText.render(this.camera, dtSec, currState);
@@ -705,6 +876,157 @@ export class ThreeRenderer implements IRenderer {
       activeProjectiles: this.lastProjectileCount,
       interpAlpha: this.lastInterpAlpha,
     };
+  }
+
+  // ---- Real-Time Dynamic Point Light Orchestrator (4 Slots, ZERO Allocations) ----
+
+  private updateDynamicPointLights(
+    currState: Readonly<SimState>,
+    px: number,
+    py: number,
+    pz: number,
+    dtSec: number,
+  ): void {
+    const flicker = 0.90 + 0.10 * Math.sin(this.elapsedTimeSec * 11.5) * Math.cos(this.elapsedTimeSec * 7.3);
+
+    // Slot 0: Hero weapon / aura warm pool light (subtle tasteful key fill so heroes stay sculpted, never blown out!)
+    const hc = HERO_LIGHT_COLOR[currState.characterId] ?? [1.0, 0.72, 0.34];
+    const heroLightIntensity =
+      currState.phase === 'title' || currState.phase === 'character_select' || currState.phase === 'map_select'
+        ? 0.52 * flicker
+        : (this.currentMapId === 'Graveyard' || this.currentMapId === 'FinalBossMap' ? 0.48 : 0.32) * flicker;
+    setGlobalPointLight(0, px, py + 1.85, pz, 10.5, hc[0], hc[1], hc[2], heroLightIntensity);
+
+    // Slot 1: Nearest glowing world brazier, Darkness Lamp, Pylon or Shrine!
+    let foundWorldLight = false;
+    let bestDistSq = 36 * 36;
+    let l1x = 0;
+    let l1y = 0;
+    let l1z = 0;
+    let l1r = 1.0;
+    let l1g = 0.62;
+    let l1b = 0.22;
+    let l1Range = 16.0;
+    let l1Int = 0.95;
+
+    // Prioritize lit Darkness Lamps during Graveyard darkness
+    for (let i = 0; i < currState.darknessLamps.length; i++) {
+      const lamp = currState.darknessLamps[i]!;
+      const dx = lamp.pos.x - px;
+      const dz = lamp.pos.z - pz;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        foundWorldLight = true;
+        l1x = lamp.pos.x;
+        l1y = lamp.pos.y + 3.0;
+        l1z = lamp.pos.z;
+        l1r = 1.0;
+        l1g = 0.76;
+        l1b = 0.26;
+        l1Range = lamp.lit ? 22.0 : 12.0;
+        l1Int = (lamp.lit ? 1.35 : 0.45) * flicker;
+      }
+    }
+
+    // Check Boss Pylons in FinalBossMap
+    if (!foundWorldLight) {
+      for (let i = 0; i < currState.pylons.length; i++) {
+        const pyObj = currState.pylons[i]!;
+        if (!pyObj.active) continue;
+        const dx = pyObj.pos.x - px;
+        const dz = pyObj.pos.z - pz;
+        const dSq = dx * dx + dz * dz;
+        if (dSq < bestDistSq) {
+          bestDistSq = dSq;
+          foundWorldLight = true;
+          l1x = pyObj.pos.x;
+          l1y = pyObj.pos.y + 5.2;
+          l1z = pyObj.pos.z;
+          if (pyObj.cleansed) {
+            l1r = 0.28; l1g = 1.0; l1b = 0.65;
+          } else {
+            l1r = 1.0; l1g = 0.22; l1b = 0.72;
+          }
+          l1Range = 22.0;
+          l1Int = 1.15 * flicker;
+        }
+      }
+    }
+
+    // Otherwise nearest sanctuary brazier built by TerrainMeshBuilder!
+    if (!foundWorldLight) {
+      const brazier = this.terrainBuilder.getNearestBrazier(px, pz);
+      if (brazier) {
+        foundWorldLight = true;
+        l1x = brazier.x;
+        l1y = brazier.y + 2.4;
+        l1z = brazier.z;
+        l1r = brazier.r;
+        l1g = brazier.g;
+        l1b = brazier.b;
+        l1Range = 18.0;
+        l1Int = 1.05 * flicker;
+      }
+    }
+
+    if (foundWorldLight) {
+      setGlobalPointLight(1, l1x, l1y, l1z, l1Range, l1r, l1g, l1b, l1Int);
+    } else {
+      setGlobalPointLight(1, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    // Slot 2: Nearest Boss Core or Blazing Projectile / AreaEffect
+    let foundCombatLight = false;
+    for (let i = 0; i < currState.enemies.length; i++) {
+      const e = currState.enemies[i]!;
+      if (e.isBoss || e.role === 'miniboss') {
+        const dx = e.pos.x - px;
+        const dz = e.pos.z - pz;
+        if (dx * dx + dz * dz < 42 * 42) {
+          foundCombatLight = true;
+          const isFinal = this.currentMapId === 'FinalBossMap';
+          setGlobalPointLight(
+            2,
+            e.pos.x,
+            e.pos.y + 2.6,
+            e.pos.z,
+            20.0,
+            isFinal ? 1.0 : 0.35,
+            isFinal ? 0.28 : 0.88,
+            isFinal ? 0.35 : 1.0,
+            1.1 * flicker,
+          );
+          break;
+        }
+      }
+    }
+    if (!foundCombatLight && currState.projectiles.length > 0) {
+      const pr = currState.projectiles[0]!;
+      foundCombatLight = true;
+      setGlobalPointLight(2, pr.pos.x, pr.pos.y + 0.5, pr.pos.z, 10.5, 1.0, 0.68, 0.26, 0.85);
+    }
+    if (!foundCombatLight) {
+      setGlobalPointLight(2, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    // Slot 3: Decaying HDR Combat Impact Flash Light!
+    if (this.flashLightEnergy > 0.02) {
+      this.flashLightEnergy = Math.max(0, this.flashLightEnergy - dtSec * 4.8);
+      setGlobalPointLight(
+        3,
+        this.flashLightX,
+        this.flashLightY,
+        this.flashLightZ,
+        16.0,
+        this.flashLightR,
+        this.flashLightG,
+        this.flashLightB,
+        this.flashLightEnergy,
+      );
+    } else {
+      setGlobalPointLight(3, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
   }
 
   // ---- Internal Lighting & Camera Helpers ----
@@ -736,6 +1058,9 @@ export class ThreeRenderer implements IRenderer {
     if (this.skyDomeMat.uniforms.uNightAmount) {
       this.skyDomeMat.uniforms.uNightAmount.value = p.nightAmount;
     }
+    if (this.skyDomeMat.uniforms.uBiomeMode) {
+      this.skyDomeMat.uniforms.uBiomeMode.value = p.biomeMode;
+    }
 
     setGlobalToonLighting({
       sunDirX: p.sunDir[0],
@@ -760,6 +1085,8 @@ export class ThreeRenderer implements IRenderer {
       inkG: p.inkG,
       inkB: p.inkB,
     });
+
+    this.postProcess.applyBiomeGrade(p.grade);
   }
 
   private addShakeTrauma(amount: number): void {
@@ -787,44 +1114,39 @@ export class ThreeRenderer implements IRenderer {
       currState.phase === 'character_select' ||
       currState.phase === 'map_select'
     ) {
-      // Hero Showcase Lens (54° cinematic telephoto) framing the hero cleanly clear of UI!
-      const showcaseFov = 54;
+      // Hero Showcase Telephoto Lens (48° dramatic portrait lens framing the sculpted hero!)
+      const showcaseFov = 48;
       if (Math.abs(this.camera.fov - showcaseFov) > 0.05) {
         this.camera.fov = showcaseFov;
         this.camera.updateProjectionMatrix();
       }
       const isPortrait = this.lastViewportH > this.lastViewportW;
-      // Frame the hero from a lively 3/4 FRONT angle so face, eyes & weapon shine toward the player!
-      const orbitA = yaw + Math.PI + 0.38 + Math.sin(this.elapsedTimeSec * 0.24) * 0.16;
-      const dist = isPortrait ? 6.4 : 5.4;
+      const orbitA = yaw + Math.PI + 0.42 + Math.sin(this.elapsedTimeSec * 0.24) * 0.14;
+      const dist = isPortrait ? 6.1 : 4.95;
       const camX = px + Math.sin(orbitA) * dist;
       const camZ = pz + Math.cos(orbitA) * dist;
       const camFloor = this.currentTerrain
-        ? this.currentTerrain.sample(camX, camZ).height + 1.35
-        : py + 1.8;
-      const camY = Math.max(camFloor, py + (isPortrait ? 2.15 : 2.05));
+        ? this.currentTerrain.sample(camX, camZ).height + 1.25
+        : py + 1.65;
+      const camY = Math.max(camFloor, py + (isPortrait ? 2.0 : 1.85));
 
       this._camPos.set(camX, camY, camZ);
-
-      // Compute camera right vector so hero shifts cleanly to the unobstructed side
       this._camOffset.set(px - camX, 0, pz - camZ).normalize();
       this._right.crossVectors(this._camOffset, this._up).normalize();
 
       if (currState.phase === 'title') {
         if (isPortrait) {
-          // Shift look target downward so the hero sits cleanly in the upper half above the mobile dock
           this._targetPos.set(px, py + 0.35, pz);
         } else {
-          // Shift look target left so the hero stands proudly in the right-center foreground
-          const shiftLeft = -1.45;
+          const shiftLeft = -1.28;
           this._targetPos.set(
             px + this._right.x * shiftLeft,
-            py + 1.45,
+            py + 1.38,
             pz + this._right.z * shiftLeft,
           );
         }
       } else {
-        this._targetPos.set(px, py + 1.45, pz);
+        this._targetPos.set(px, py + 1.38, pz);
       }
 
       this.camera.position.copy(this._camPos);
